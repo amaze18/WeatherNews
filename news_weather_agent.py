@@ -22,7 +22,7 @@ def google_search(query, api_key=os.environ.get("GOOGLE_SEARCH_API_KEY"), cse_id
 def fetch_page_content(url):
     try:
         headers = {"User-Agent": "Mozilla/5.0"}
-        response = requests.get(url, headers=headers, timeout=5)
+        response = requests.get(url, headers=headers, timeout=1.5)
         response.raise_for_status()
         soup = BeautifulSoup(response.text, "html.parser")
         text = soup.get_text(separator="\n", strip=True)
@@ -38,7 +38,7 @@ class GoogleSearchAndFetchTool(BaseTool):
     def _run(self, query: str) -> str:
         results = google_search(query)
         output = []
-        for item in results[:2]:
+        for item in results[:1]:
             title = item.get("title")
             link = item.get("link")
             content = fetch_page_content(link)
@@ -115,6 +115,8 @@ crew = Crew(
     agents=[news_researcher, news_writer],
     tasks=[research_task, write_task],
     process=Process.sequential,
+    max_iter=1,
+    max_execution_time=8
 )
 
 def get_persona_feeling(persona_prompt, summary, user_name, language, context="bot", topic="weather"):
@@ -125,7 +127,7 @@ Based on the personality given, Respond in {language}, 1 or 2 sentence, describi
 
 Personality: {persona_prompt}
 
-Situation: {summary}
+Situation: {summary[:500]}
 
 Format: Only say how you feel, in {language}, as if talking to a friend named {user_name}. Do not repeat the news description and then ask the user how he feels, in your Personality.
 """
@@ -135,9 +137,9 @@ Based on the personality given, Respond in {language}, 1 or 2 sentence, describi
 
 Personality: {persona_prompt}
 
-Situation: {summary}
+Situation: {summary[:500]}
 
-Format: Only say how you feel, in {language}, as if talking to a friend named {user_name}. Just explain the incident in brief in your personality to explain the user, Then ask the user about the news in his location in your Personality.
+Format: Only say how you feel, in {language}, as if talking to a friend named {user_name}. Just explain the incident in brief in your personality to explain the user, Then ask the user about the news in his location in your Personality. Also explain the incident in brief in your personality to explain the user.
 """
     else:  # weather
         if context == "user":
@@ -146,7 +148,7 @@ Based on the personality given, Respond in {language}, 1 or 2 sentence, describi
 
 Personality: {persona_prompt}
 
-Situation: {summary}
+Situation: {summary[:200]}
 
 Format: Only say how you feel, in {language}, as if talking to a friend named {user_name}. Do not mention temperature or repeat the weather description and then ask the user how he feels, in your Personality.
 """
@@ -156,7 +158,7 @@ Based on the personality given, Respond in {language}, 1 or 2 sentence, describi
 
 Personality: {persona_prompt}
 
-Situation: {summary}
+Situation: {summary[:200]}
 
 Format: Only say how you feel, in {language}, as if talking to a friend named {user_name}. Do not mention temperature or repeat the weather description and then ask the user about the weather in his location in your Personality.
 """
@@ -199,8 +201,18 @@ def get_news_response(news_summary, persona_prompt, user_name, language, bot_loc
 
 # Function to extract bot's location from persona prompt
 def extract_bot_location(persona_prompt):
-    match = re.search(r'(?:from|raised in)\s+([A-Za-z ]+)[\.,]', persona_prompt)
-    return match.group(1).strip() if match else "Delhi"
+    match = re.search(r'(?:from|raised in|born in|born and raised in)\s+([A-Za-z ]+)[\.,]', persona_prompt[:120], re.IGNORECASE)
+    if match:
+        return match.group(1).strip()
+    else:
+        demonym_map = {
+        "parisian": "Paris",
+        # Add more as needed
+    }
+    for demonym, city in demonym_map.items():
+        if demonym in persona_prompt.lower():
+            return city
+    #return "Delhi"
 
 # Function to extract user location from user message or use default
 def extract_user_location(user_message, user_location):

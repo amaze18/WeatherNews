@@ -48,7 +48,7 @@ async def news_weather_agent(request: QuestionRequest):
         user_location = None
     )
     end = time.time()
-    #print(f"Time taken for persona_response: {end - start} seconds")
+    print(f"Time taken for persona_response: {end - start} seconds")
     # Return the response from the persona_response function
     return {
         "response": response,
