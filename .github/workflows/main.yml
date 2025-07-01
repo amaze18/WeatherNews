@@ -1,12 +1,14 @@
-name: Deploy API to Cloud Run
+name: Deploy Flask API to Cloud Run
 
 on:
   push:
     branches: [main]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 jobs:
-  deploy:
+  build:
     runs-on: ubuntu-latest
     permissions:
       id-token: write
@@ -21,24 +23,90 @@ jobs:
         with:
           python-version: '3.10'
 
+      - name: Cache Python packages
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Upgrade pip and setuptools
+        run: python -m pip install --upgrade pip setuptools
+
       - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
+        run: pip install -r requirements.txt
+
+      - name: Check for broken dependencies
+        run: pip check
+
+  deploy-dev:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
 
       - name: Authenticate with Google Cloud
         uses: google-github-actions/auth@v1
         with:
-          workload_identity_provider: "projects/272204782945/locations/global/workloadIdentityPools/flask-api-pool/providers/github-actions"
-          service_account: "github-actions-deployer@novi-464612.iam.gserviceaccount.com"
+          workload_identity_provider: "projects/230588073079/locations/global/workloadIdentityPools/github-pool/providers/github-provider"
+          service_account: "github-actions-deployer@novi-464614.iam.gserviceaccount.com"
 
       - name: Set up gcloud CLI
         uses: google-github-actions/setup-gcloud@v1
         with:
-          project_id: novi-464612
+          project_id: novi-464614
 
-      - name: Deploy to Cloud Run
+      - name: Deploy to Cloud Run (dev)
         run: |
-          gcloud run deploy flask-api \
+          gcloud run deploy weathernews-dev \
+            --source=. \
+            --region=europe-west1 \
+            --platform=managed \
+            --allow-unauthenticated \
+            --quiet
+
+  approval:
+    needs: deploy-dev
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: https://weathernews-prod-europe-west1.a.run.app
+
+    steps:
+      - name: Await manual approval
+        run: echo "Waiting for production deployment approval..."
+
+  deploy-prod:
+    needs: approval
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Authenticate with Google Cloud
+        uses: google-github-actions/auth@v1
+        with:
+          workload_identity_provider: "projects/230588073079/locations/global/workloadIdentityPools/github-pool/providers/github-provider"
+          service_account: "github-actions-deployer@novi-464614.iam.gserviceaccount.com"
+
+      - name: Set up gcloud CLI
+        uses: google-github-actions/setup-gcloud@v1
+        with:
+          project_id: novi-464614
+
+      - name: Deploy to Cloud Run (prod)
+        run: |
+          gcloud run deploy weathernews-prod \
             --source=. \
             --region=europe-west1 \
             --platform=managed \
