@@ -1,0 +1,46 @@
+name: Deploy API to Cloud Run
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Authenticate with Google Cloud
+        uses: google-github-actions/auth@v1
+        with:
+          workload_identity_provider: "projects/272204782945/locations/global/workloadIdentityPools/flask-api-pool/providers/github-actions"
+          service_account: "github-actions-deployer@novi-464612.iam.gserviceaccount.com"
+
+      - name: Set up gcloud CLI
+        uses: google-github-actions/setup-gcloud@v1
+        with:
+          project_id: novi-464612
+
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy flask-api \
+            --source=. \
+            --region=europe-west1 \
+            --platform=managed \
+            --allow-unauthenticated \
+            --quiet
