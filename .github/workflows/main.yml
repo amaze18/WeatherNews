@@ -54,8 +54,7 @@ jobs:
       - name: Authenticate with Google Cloud
         uses: google-github-actions/auth@v1
         with:
-          workload_identity_provider: "projects/230588073079/locations/global/workloadIdentityPools/github-wif-pool-v2/providers/github-provider-v2"
-          service_account: "github-actions-deployer@novi-464614.iam.gserviceaccount.com"
+          credentials_json: '${{ secrets.GCP_SA_KEY }}'
 
       - name: Set up gcloud CLI
         uses: google-github-actions/setup-gcloud@v1
@@ -70,6 +69,10 @@ jobs:
             --platform=managed \
             --allow-unauthenticated \
             --quiet
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GOOGLE_SEARCH_API_KEY: ${{ secrets.GOOGLE_SEARCH_API_KEY }}
+          GOOGLE_CSE_ID: ${{ secrets.GOOGLE_CSE_ID }}
 
   approval:
     needs: deploy-dev
@@ -96,8 +99,7 @@ jobs:
       - name: Authenticate with Google Cloud
         uses: google-github-actions/auth@v1
         with:
-          workload_identity_provider: "projects/230588073079/locations/global/workloadIdentityPools/github-wif-pool-v2/providers/github-provider-v2"
-          service_account: "github-actions-deployer@novi-464614.iam.gserviceaccount.com"
+          credentials_json: '${{ secrets.GCP_SA_KEY }}'
 
       - name: Set up gcloud CLI
         uses: google-github-actions/setup-gcloud@v1
@@ -112,3 +114,7 @@ jobs:
             --platform=managed \
             --allow-unauthenticated \
             --quiet
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GOOGLE_SEARCH_API_KEY: ${{ secrets.GOOGLE_SEARCH_API_KEY }}
+          GOOGLE_CSE_ID: ${{ secrets.GOOGLE_CSE_ID }}
