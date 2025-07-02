@@ -76,7 +76,6 @@ jobs:
             --region=asia-south1 \
             --platform=managed \
             --allow-unauthenticated \
-            --port=8000 \
             --memory=1Gi \
             --cpu=1 \
             --max-instances=10 \
@@ -117,7 +116,6 @@ jobs:
             --region=asia-south1 \
             --platform=managed \
             --allow-unauthenticated \
-            --port=8000 \
             --memory=1Gi \
             --cpu=1 \
             --max-instances=20 \

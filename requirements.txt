@@ -3,3 +3,4 @@ crewai_tools
 llama-index-llms-google-genai
 fastapi
 google-api-python-client
+uvicorn[standard]

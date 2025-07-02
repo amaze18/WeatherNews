@@ -4,6 +4,9 @@ from typing import Union
 from news_weather_agent import persona_response
 from bot_prompt import get_bot_prompt
 import time
+import uvicorn
+import os
+
 app = FastAPI()
 
 # Define a Pydantic model for the incoming request body
@@ -56,3 +59,7 @@ async def news_weather_agent(request: QuestionRequest):
         "user_name": request.user_name,
         "language": request.language
     }
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 8080))  # Cloud Run sets this env variable
+    uvicorn.run("main:app", host="0.0.0.0", port=port)
