@@ -27,7 +27,7 @@ jobs:
         uses: actions/cache@v3
         with:
           path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          key: ${{ runner.os }}-pip-${{ hashFiles('/requirements.txt') }}
           restore-keys: |
             ${{ runner.os }}-pip-
 
@@ -54,7 +54,7 @@ jobs:
       - name: Authenticate with Google Cloud
         uses: google-github-actions/auth@v1
         with:
-          workload_identity_provider: "projects/230588073079/locations/global/workloadIdentityPools/github-pool/providers/github-provider"
+          workload_identity_provider: "projects/230588073079/locations/global/workloadIdentityPools/github-wif-pool-v2/providers/github-provider-v2"
           service_account: "github-actions-deployer@novi-464614.iam.gserviceaccount.com"
 
       - name: Set up gcloud CLI
@@ -96,7 +96,7 @@ jobs:
       - name: Authenticate with Google Cloud
         uses: google-github-actions/auth@v1
         with:
-          workload_identity_provider: "projects/230588073079/locations/global/workloadIdentityPools/github-pool/providers/github-provider"
+          workload_identity_provider: "projects/230588073079/locations/global/workloadIdentityPools/github-wif-pool-v2/providers/github-provider-v2"
           service_account: "github-actions-deployer@novi-464614.iam.gserviceaccount.com"
 
       - name: Set up gcloud CLI
