@@ -60,6 +60,3 @@ async def news_weather_agent(request: QuestionRequest):
         "language": request.language
     }
 
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8080))  # Cloud Run sets this env variable
-    uvicorn.run("main:app", host="0.0.0.0", port=port)
