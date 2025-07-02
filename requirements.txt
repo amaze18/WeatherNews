@@ -5,3 +5,4 @@ fastapi
 google-api-python-client
 uvicorn[standard]
 beautifulsoup4
+gunicorn
