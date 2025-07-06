@@ -56,7 +56,7 @@ jobs:
       - name: Authenticate with Google Cloud
         uses: google-github-actions/auth@v1
         with:
-          credentials_json: ${{ secrets.GCP_CREDENTIALS }}
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
 
       - name: Set up gcloud CLI
         uses: google-github-actions/setup-gcloud@v1
@@ -97,7 +97,7 @@ jobs:
       - name: Authenticate with Google Cloud
         uses: google-github-actions/auth@v1
         with:
-          credentials_json: ${{ secrets.GCP_CREDENTIALS }}
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
 
       - name: Set up gcloud CLI
         uses: google-github-actions/setup-gcloud@v1
