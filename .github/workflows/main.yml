@@ -1,4 +1,4 @@
-name: Deploy Flask API to Cloud Run
+name: Deploy FastAPI to Cloud Run
 
 on:
   push:
@@ -9,6 +9,7 @@ on:
 
 jobs:
   build:
+    name: Build & Install Dependencies
     runs-on: ubuntu-latest
     permissions:
       id-token: write
@@ -41,6 +42,7 @@ jobs:
         run: pip check
 
   deploy-dev:
+    name: Deploy to Cloud Run (Dev)
     needs: build
     runs-on: ubuntu-latest
     permissions:
@@ -54,44 +56,35 @@ jobs:
       - name: Authenticate with Google Cloud
         uses: google-github-actions/auth@v1
         with:
-          credentials_json: '${{ secrets.GCP_SA_KEY }}'
+          credentials_json: ${{ secrets.GCP_CREDENTIALS }}
 
       - name: Set up gcloud CLI
         uses: google-github-actions/setup-gcloud@v1
         with:
-          project_id: novi-464614
+          project_id: lik-460814
+          export_default_credentials: true
 
-      - name: Show active account (debug)
+      - name: Show active auth account
         run: gcloud auth list
 
-      - name: Deploy to Cloud Run (dev)
+      - name: Deploy to Cloud Run (Dev)
         run: |
           gcloud config unset auth/credential_file_override
           gcloud run deploy weathernews-dev \
             --source=. \
-            --region=europe-west1 \
+            --project=lik-460814 \
+            --region=asia-south1 \
             --platform=managed \
-            --service-account=230588073079-compute@developer.gserviceaccount.com \
             --allow-unauthenticated \
+            --memory=1Gi \
+            --cpu=1 \
+            --max-instances=10 \
+            --set-env-vars="GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }},GOOGLE_SEARCH_API_KEY=${{ secrets.GOOGLE_SEARCH_API_KEY }},GOOGLE_CSE_ID=${{ secrets.GOOGLE_CSE_ID }}" \
             --quiet
-        env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          GOOGLE_SEARCH_API_KEY: ${{ secrets.GOOGLE_SEARCH_API_KEY }}
-          GOOGLE_CSE_ID: ${{ secrets.GOOGLE_CSE_ID }}
-
-  approval:
-    needs: deploy-dev
-    runs-on: ubuntu-latest
-    environment:
-      name: production
-      url: https://weathernews-prod-europe-west1.a.run.app
-
-    steps:
-      - name: Await manual approval
-        run: echo "Waiting for production deployment approval..."
 
   deploy-prod:
-    needs: approval
+    name: Deploy to Cloud Run (Prod)
+    needs: deploy-dev
     runs-on: ubuntu-latest
     permissions:
       id-token: write
@@ -104,27 +97,28 @@ jobs:
       - name: Authenticate with Google Cloud
         uses: google-github-actions/auth@v1
         with:
-          credentials_json: '${{ secrets.GCP_SA_KEY }}'
+          credentials_json: ${{ secrets.GCP_CREDENTIALS }}
 
       - name: Set up gcloud CLI
         uses: google-github-actions/setup-gcloud@v1
         with:
-          project_id: novi-464614
+          project_id: lik-460814
+          export_default_credentials: true
 
-      - name: Show active account (debug)
+      - name: Show active auth account
         run: gcloud auth list
 
-      - name: Deploy to Cloud Run (prod)
+      - name: Deploy to Cloud Run (Prod)
         run: |
           gcloud config unset auth/credential_file_override
           gcloud run deploy weathernews-prod \
             --source=. \
-            --region=europe-west1 \
+            --project=lik-460814 \
+            --region=asia-south1 \
             --platform=managed \
-            --service-account=230588073079-compute@developer.gserviceaccount.com \
             --allow-unauthenticated \
+            --memory=1Gi \
+            --cpu=1 \
+            --max-instances=20 \
+            --set-env-vars="GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }},GOOGLE_SEARCH_API_KEY=${{ secrets.GOOGLE_SEARCH_API_KEY }},GOOGLE_CSE_ID=${{ secrets.GOOGLE_CSE_ID }}" \
             --quiet
-        env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          GOOGLE_SEARCH_API_KEY: ${{ secrets.GOOGLE_SEARCH_API_KEY }}
-          GOOGLE_CSE_ID: ${{ secrets.GOOGLE_CSE_ID }}
