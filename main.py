@@ -26,11 +26,11 @@ def scheduled_weekly_news_summary():
             params["bot_city"],    # bot_location
             params["user_location"] 
         )
-        #insert_bot_message(
-        #    email=params["email"],
-        #    bot_id=params["bot_id"],
-        #    message=summary
-        #)
+        insert_bot_message(
+            email=params["email"],
+            bot_id=params["bot_id"],
+            message=summary
+        )
 
 @repeat_every(seconds=60*60*6)  # Every 6 hours
 def scheduled_major_event_alert():
@@ -45,12 +45,11 @@ def scheduled_major_event_alert():
             params["user_location"]
         )
         if alert:
-        #    insert_bot_message(
-        #        email=params["email"],
-        #        bot_id=params["bot_id"],
-        #        message=alert
-        #    )
-            print("HIII")
+            insert_bot_message(
+                email=params["email"],
+                bot_id=params["bot_id"],
+                message=alert
+            )
 app = FastAPI()
 
 # Define a Pydantic model for the incoming request body
