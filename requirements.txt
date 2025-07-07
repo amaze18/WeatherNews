@@ -6,3 +6,5 @@ google-api-python-client
 uvicorn[standard]
 beautifulsoup4
 gunicorn
+fastapi_utils
+supabase

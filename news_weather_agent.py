@@ -188,7 +188,7 @@ def get_weather_response(weather_summary, persona_prompt, user_name, language, b
 # Function to get news response based on summary and persona
 def get_news_response(news_summary, persona_prompt, user_name, language, bot_location, user_location=None, context="bot"):
     # Extract a main event/incident keyword for variety
-    match = re.search(r"(earthquake|flood|protest|accident|crime|festival|strike|curfew|violence|celebration|shutdown|alert|breaking|trending|election|government collapse|prime minister|president|parliament|cabinet reshuffle|budget|inflation|stock market crash|economic crisis|policy change|sanctions|war|conflict|protest|strike|currency devaluation|interest rate hike|GDP|recession)", news_summary, re.IGNORECASE)
+    match = re.search(r"(earthquake|flood|protest|accident|crime|festival|strike|curfew|violence|celebration|shutdown|alert|breaking|trending|election|government collapse|cabinet reshuffle|inflation|stock market crash|economic crisis|policy change|war|currency devaluation|interest rate hike|recession)", news_summary, re.IGNORECASE)
     news_desc = match.group(1).lower() if match else "something interesting"
     feeling = get_persona_feeling(persona_prompt, news_summary, user_name, language, context, topic="news")
     if context == "user":
@@ -285,10 +285,10 @@ def is_major_event(news_text):
     Returns True if the news text contains major political, economic or tragid event keywords.
     """
     keywords = [
-        "election", "government collapse", "prime minister", "president", "parliament", "cabinet reshuffle",
-        "budget", "inflation", "stock market crash", "economic crisis", "policy change", "sanctions",
-        "war", "conflict", "protest", "strike", "currency devaluation", "interest rate hike", "GDP", "recession",
-        "earthquake", "flood", "protest", "accident", "crime", "festival", "strike",
+        "election", "government collapse", "cabinet reshuffle",
+        "inflation", "stock market crash", "economic crisis", "policy change", "sanctions",
+        "war", "protest", "strike", "currency devaluation", "interest rate hike", "recession",
+        "earthquake", "flood", "protest", "accident", "crime", "strike",
         "curfew", "violence", "celebration", "shutdown", "alert", "breaking", "death"
     ]
     pattern = r"|".join([re.escape(word) for word in keywords])
@@ -302,9 +302,6 @@ def generate_weekly_news_summary(persona_prompt, user_name, language,bot_locatio
     topic = f"Major political, economic and tragid news in {user_location} country this week"
     result = crew.kickoff(inputs={'topic': topic})
     news_summary = str(result)
-    # Optionally, filter for major events
-    if is_major_event(news_summary):
-        print("🚨 Major Event Detected! 🚨")
     response = get_news_response(
         news_summary, persona_prompt, user_name, language, bot_location, user_location, context="user"
     )
