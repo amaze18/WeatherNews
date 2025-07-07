@@ -138,7 +138,7 @@ Based on the personality given, Respond in {language}, 1 or 2 sentence, describi
 Personality: {persona_prompt}
 
 Situation: {summary[:500]}
-
+ 
 Format: Only say how you feel, in {language}, as if talking to a friend named {user_name}. Just explain the incident in brief in your personality to explain the user, Then ask the user about the news in his location in your Personality. Also explain the incident in brief in your personality to explain the user.
 """
     else:  # weather
