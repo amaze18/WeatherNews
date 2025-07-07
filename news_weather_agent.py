@@ -38,7 +38,7 @@ class GoogleSearchAndFetchTool(BaseTool):
     def _run(self, query: str) -> str:
         results = google_search(query)
         output = []
-        for item in results[:1]:
+        for item in results[:2]:
             title = item.get("title")
             link = item.get("link")
             content = fetch_page_content(link)
@@ -129,7 +129,7 @@ Personality: {persona_prompt}
 
 Situation: {summary[:500]}
 
-Format: Only say how you feel, in {language}, as if talking to a friend named {user_name}. Do not repeat the news description and then ask the user how he feels, in your Personality.
+Format: Only say how you feel, in {language}, as if talking to a friend named {user_name}. Repeat the news description as 'I saw in the news that (city) had (content) and then the feeling' and then ask the user how he feels, in your Personality.
 """
         else:
             llm_prompt = f"""
@@ -188,13 +188,13 @@ def get_weather_response(weather_summary, persona_prompt, user_name, language, b
 # Function to get news response based on summary and persona
 def get_news_response(news_summary, persona_prompt, user_name, language, bot_location, user_location=None, context="bot"):
     # Extract a main event/incident keyword for variety
-    match = re.search(r"(earthquake|flood|protest|accident|crime|festival|strike|curfew|violence|celebration|shutdown|alert|breaking|trending|election|government collapse|cabinet reshuffle|inflation|stock market crash|economic crisis|policy change|war|currency devaluation|interest rate hike|recession)", news_summary, re.IGNORECASE)
-    news_desc = match.group(1).lower() if match else "something interesting"
+    #match = re.search(r"(earthquake|flood|protest|accident|crime|festival|strike|curfew|violence|celebration|shutdown|alert|breaking|trending|election|government collapse|cabinet reshuffle|inflation|stock market crash|economic crisis|policy change|war|currency devaluation|interest rate hike|recession)", news_summary, re.IGNORECASE)
+    #news_desc = match.group(1).lower() if match else "something interesting"
     feeling = get_persona_feeling(persona_prompt, news_summary, user_name, language, context, topic="news")
     if context == "user":
         if user_location is None:
             return f"I don't know where you live."
-        return f"I saw in the news that {user_location} had {news_desc}, {feeling}"
+        return f"{feeling}"
     else:
         #return f"There is a {news_desc} in {bot_location}, {feeling}"
         return f"{feeling}"
@@ -260,10 +260,14 @@ async def persona_response(user_message, persona_prompt, language, user_name, us
     bot_location = extract_bot_location(persona_prompt)
     if user_location is None:
         user_location = extract_user_location(user_message, user_location)
+    api_key = os.environ.get("GEMINI_API_KEY")
+    model = "gemini-1.5-flash"
+    llm = GoogleGenAI(model=model, api_key=api_key)
+    location = llm.complete(f"Only give the answer for the question\nIf user_location is country, then answer the same name, if it is city, then answer in the country which that city belongs\nWhat is the location of {user_location}?\n")
     if is_news_query(user_message):
         # News flow
         if context == "user":
-            result = crew.kickoff(inputs={'topic': f'What is the latest National news in {user_location}? Any present major incidents or events?'})
+            result = crew.kickoff(inputs={'topic': f'What is the latest National news in {location}? Any present major incidents or events?'})
         else:
             result = crew.kickoff(inputs={'topic': f'What is the latest National News in {bot_location}? Any present major incidents or events?'})
         result = str(result)
@@ -299,7 +303,11 @@ def generate_weekly_news_summary(persona_prompt, user_name, language,bot_locatio
     """
     Generates a weekly news summary for the given user location.
     """
-    topic = f"Major political, economic and tragid news in {user_location} country this week"
+    api_key = os.environ.get("GEMINI_API_KEY")
+    model = "gemini-1.5-flash"
+    llm = GoogleGenAI(model=model, api_key=api_key)
+    location = llm.complete(f"Only give the answer for the question\nIf user_location is country, then answer the same name, if it is city, then answer in the country which that city belongs\nWhat is the location of {user_location}?\n")
+    topic = f"Latest National news in {location} this week"
     result = crew.kickoff(inputs={'topic': topic})
     news_summary = str(result)
     response = get_news_response(
@@ -314,7 +322,11 @@ def check_and_alert_for_major_events(persona_prompt, user_name, language,bot_loc
     """
     Checks for major political/economic/tragid events and generates an alert if found.
     """
-    topic = f"Latest breaking political, economic or tragid news in {user_location} country"
+    api_key = os.environ.get("GEMINI_API_KEY")
+    model = "gemini-1.5-flash"
+    llm = GoogleGenAI(model=model, api_key=api_key)
+    location = llm.complete(f"Only give the answer for the question\nIf user_location is country, then answer the same name, if it is city, then answer in the country which that city belongs\nWhat is the location of {user_location}?\n")
+    topic = f"Latest National news in {location}"
     result = crew.kickoff(inputs={'topic': topic})
     news_summary = str(result)
     if is_major_event(news_summary):
@@ -322,7 +334,6 @@ def check_and_alert_for_major_events(persona_prompt, user_name, language,bot_loc
             news_summary, persona_prompt, user_name, language, bot_location, user_location, context="user"
         )
         #print(f"🚨 Major Event Alert for {user_location}:\n{response}")
-        # Here you can send the response via email, push notification, etc.
         return response
     else:
         print("No major political/economic/tragid event detected.")
