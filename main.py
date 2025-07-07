@@ -3,7 +3,7 @@ from pydantic import BaseModel
 from typing import Union
 from news_weather_agent import persona_response, generate_weekly_news_summary, check_and_alert_for_major_events
 from bot_prompt import get_bot_prompt
-import time
+import time as pytime
 import uvicorn
 import os
 from dotenv import load_dotenv
@@ -23,8 +23,8 @@ def scheduled_weekly_news_summary():
             params["bot_prompt"],  # persona_prompt
             params["user_name"],
             params["language"],
-            params["bot_city"]    # bot_location
-            # user_location 
+            params["bot_city"],    # bot_location
+            params["user_location"] 
         )
         insert_bot_message(
             email=params["email"],
@@ -41,7 +41,8 @@ def scheduled_major_event_alert():
             params["bot_prompt"],
             params["user_name"],
             params["language"],
-            params["bot_city"]
+            params["bot_city"],
+            params["user_location"]
         )
         if alert:
             insert_bot_message(
@@ -49,7 +50,6 @@ def scheduled_major_event_alert():
                 bot_id=params["bot_id"],
                 message=alert
             )
-
 app = FastAPI()
 
 # Define a Pydantic model for the incoming request body
@@ -61,6 +61,7 @@ class QuestionRequest(BaseModel):
     custom_bot_name: str = ""  # Custom bot name
     user_name : str = ""  # User name
     user_gender : str="" # User Gender
+    user_location : str = ""  # User location (city)
     language : str="" # Language
     traits : str="" # Traits
     previous_conversation: list = [] # previous conversation
@@ -84,16 +85,16 @@ async def news_weather_agent(request: QuestionRequest):
             userGender = request.user_gender,
             languageString=request.language
         )
-    start = time.time()
+    start = pytime.time()
     # Call the persona_response function with the request data
     response = await persona_response(
         user_message = request.message,
         persona_prompt = bot_prompt,
         language = request.language,
         user_name = request.user_name,
-        user_location = None
+        user_location = request.user_location
     )
-    end = time.time()
+    end = pytime.time()
     print(f"Time taken for persona_response: {end - start} seconds")
     # Return the response from the persona_response function
     return {
@@ -141,6 +142,7 @@ def get_all_news_agent_params():
         user_details = supabase.table("user_details").select("*").eq("email", email).single().execute().data or {}
         user_name = user_details.get("name", email.split("@")[0])
         user_gender = user_details.get("gender", "Other")
+        user_city = user_details.get("city") or "India" # Default to "Delhi" if not set
         # Get bot details
         bot_details = supabase.table("bot_personality_details").select("*").eq("bot_id", bot_id).single().execute().data or {}
         custom_bot_name = bot_details.get("bot_name", bot_id)
@@ -168,6 +170,7 @@ def get_all_news_agent_params():
             "traits": traits,
             "bot_prompt": bot_prompt,
             "bot_city": bot_city,
+            "user_location": user_city
         })
     return params_list
 
