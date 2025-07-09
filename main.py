@@ -11,9 +11,9 @@ load_dotenv()
 from supabase import Client, create_client
 from datetime import datetime, timezone, time
 import logging
-from fastapi_utils.tasks import repeat_every
+#from fastapi_utils.tasks import repeat_every
 
-@repeat_every(seconds=60*60*24*7)  # Every 7 days
+#@repeat_every(seconds=60*60*24*7)  # Every 7 days
 def scheduled_weekly_news_summary():
     print("=== Running Weekly News Summary for all users/bots ===")
     print("⏰ Running Weekly News Summary task every 7 days")
@@ -32,7 +32,7 @@ def scheduled_weekly_news_summary():
             message=summary
         )
 
-@repeat_every(seconds=60*60*6)  # Every 6 hours
+#@repeat_every(seconds=60*60*6)  # Every 6 hours
 def scheduled_major_event_alert():
     print("=== Checking for Major Events for all users/bots ===")
     print("⏰ Running Major Event Alert task every 6 hours")
@@ -105,8 +105,18 @@ async def news_weather_agent(request: QuestionRequest):
     }
 
 # Add event handlers for scheduled tasks
-app.add_event_handler("startup", scheduled_weekly_news_summary)
-app.add_event_handler("startup", scheduled_major_event_alert)
+#app.add_event_handler("startup", scheduled_weekly_news_summary)
+#app.add_event_handler("startup", scheduled_major_event_alert)
+
+@app.post("/run_weekly_summary")
+async def run_weekly_summary():
+    scheduled_weekly_news_summary()
+    return {"status": "Weekly summary triggered"}
+
+@app.post("/run_major_event_alert")
+async def run_major_event_alert():
+    scheduled_major_event_alert()
+    return {"status": "Major event alert triggered"}
 
 # Supabase connection details
 SUPABASE_URL = os.getenv("SUPABASE_URL")  # Supabase project URL from environment variable
