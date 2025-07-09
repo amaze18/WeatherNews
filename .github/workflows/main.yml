@@ -17,12 +17,12 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v3
 
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v4
         with:
-          python-version: '3.11'
+          python-version: '3.10'
 
       - name: Cache pip dependencies
         uses: actions/cache@v3
@@ -33,7 +33,7 @@ jobs:
             ${{ runner.os }}-pip-
 
       - name: Upgrade pip and setuptools
-        run: python -m pip install --upgrade pip setuptools wheel
+        run: python -m pip install --upgrade pip setuptools
 
       - name: Install dependencies
         run: pip install -r requirements.txt
@@ -51,21 +51,25 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v3
 
       - name: Authenticate with Google Cloud
-        uses: google-github-actions/auth@v1.1.1
+        uses: google-github-actions/auth@v1
         with:
           credentials_json: ${{ secrets.GCP_CREDENTIALS }}
 
       - name: Set up gcloud CLI
-        uses: google-github-actions/setup-gcloud@v1.1.1
+        uses: google-github-actions/setup-gcloud@v1
         with:
           project_id: cvoapi
           export_default_credentials: true
 
+      - name: Show active auth account
+        run: gcloud auth list
+
       - name: Deploy to Cloud Run (Dev)
         run: |
+          gcloud config unset auth/credential_file_override
           gcloud run deploy weathernews-dev \
             --source=. \
             --project=cvoapi \
@@ -75,8 +79,7 @@ jobs:
             --memory=1Gi \
             --cpu=1 \
             --max-instances=10 \
-            --entry-point="gunicorn main:app -w 2 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8080" \
-            --set-env-vars="SUPABASE_URL=${{ secrets.SUPABASE_URL }},SUPABASE_KEY=${{ secrets.SUPABASE_KEY }},GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }},GOOGLE_SEARCH_API_KEY=${{ secrets.GOOGLE_SEARCH_API_KEY }},GOOGLE_CSE_ID=${{ secrets.GOOGLE_CSE_ID }}" \
+            --set-env-vars="GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }},GOOGLE_SEARCH_API_KEY=${{ secrets.GOOGLE_SEARCH_API_KEY }},GOOGLE_CSE_ID=${{ secrets.GOOGLE_CSE_ID }},SUPABASE_KEY=${{ secrets.SUPABASE_KEY }},SUPABASE_URL=${{ secrets.SUPABASE_URL }}" \
             --quiet
 
   deploy-prod:
@@ -89,21 +92,25 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v3
 
       - name: Authenticate with Google Cloud
-        uses: google-github-actions/auth@v1.1.1
+        uses: google-github-actions/auth@v1
         with:
           credentials_json: ${{ secrets.GCP_CREDENTIALS }}
 
       - name: Set up gcloud CLI
-        uses: google-github-actions/setup-gcloud@v1.1.1
+        uses: google-github-actions/setup-gcloud@v1
         with:
           project_id: cvoapi
           export_default_credentials: true
 
+      - name: Show active auth account
+        run: gcloud auth list
+
       - name: Deploy to Cloud Run (Prod)
         run: |
+          gcloud config unset auth/credential_file_override
           gcloud run deploy weathernews-prod \
             --source=. \
             --project=cvoapi \
@@ -113,6 +120,5 @@ jobs:
             --memory=1Gi \
             --cpu=1 \
             --max-instances=20 \
-            --entry-point="gunicorn main:app -w 2 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8080" \
-            --set-env-vars="SUPABASE_URL=${{ secrets.SUPABASE_URL }},SUPABASE_KEY=${{ secrets.SUPABASE_KEY }},GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }},GOOGLE_SEARCH_API_KEY=${{ secrets.GOOGLE_SEARCH_API_KEY }},GOOGLE_CSE_ID=${{ secrets.GOOGLE_CSE_ID }}" \
+            --set-env-vars="GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }},GOOGLE_SEARCH_API_KEY=${{ secrets.GOOGLE_SEARCH_API_KEY }},GOOGLE_CSE_ID=${{ secrets.GOOGLE_CSE_ID }},SUPABASE_KEY=${{ secrets.SUPABASE_KEY }},SUPABASE_URL=${{ secrets.SUPABASE_URL }}" \
             --quiet
