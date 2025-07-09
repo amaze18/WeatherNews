@@ -36,11 +36,15 @@ class GoogleSearchAndFetchTool(BaseTool):
     description: str = "Performs a Google search and fetches a summary of the top 3 result pages."
 
     def _run(self, query: str) -> str:
-        results = google_search(query)
+        if "news" in query.lower():
+            query = f"site:news.google.com {query}"
+        print(query)
+        results = google_search(query, num=1)
         output = []
-        for item in results[:2]:
+        for item in results[:1]:
             title = item.get("title")
             link = item.get("link")
+            snippet = item.get("snippet", "")
             content = fetch_page_content(link)
             output.append(f"{title}\n{link}\n{content}\n{'-'*40}")
         return "\n".join(output)
@@ -62,22 +66,22 @@ news_researcher = Agent(
     ),
     tools=[custom_google_search_tool],  # Use the initialized custom tool
     llm=llm,
-    allow_delegation=True
+#    allow_delegation=True
 )
 
-news_writer = Agent(
-    role='Conversational Communicator',
-    goal="Present information in a friendly, clear, and engaging way, making it easy for anyone to understand and act on answers about {topic}.",
-    verbose=True,
-    memory=False,  # Set memory to False for quick responses
-    backstory=(
-        "You specialize in turning facts and recommendations into helpful, easy-to-read responses. "
-        "Your writing is approachable and practical, perfect for answering real-world questions people care about."
-    ),
-    #tools=[tool],
-    llm=llm,
-    allow_delegation=False
-)
+#news_writer = Agent(
+#    role='Conversational Communicator',
+#    goal="Present information in a friendly, clear, and engaging way, making it easy for anyone to understand and act on answers about {topic}.",
+#    verbose=True,
+#    memory=False,  # Set memory to False for quick responses
+#    backstory=(
+#        "You specialize in turning facts and recommendations into helpful, easy-to-read responses. "
+#        "Your writing is approachable and practical, perfect for answering real-world questions people care about."
+#    ),
+#    #tools=[tool],
+#    llm=llm,
+#    allow_delegation=False
+#)
 
 # Define tasks
 research_task = Task(
@@ -94,30 +98,46 @@ research_task = Task(
     agent=news_researcher,
 )
 
-write_task = Task(
-    description=(
-    "Based on the research, write a clear and friendly response about {topic}. "
-    "Make the answer easy to understand, practical, and directly useful for the question asked. "
-    "If relevant, include tips, examples, or next steps."
-    ),
-    expected_output=(
-    "A short, well-structured answer (2-3 paragraphs) in markdown format, "
-    "providing practical and up-to-date information about {topic}."
-    ),
+#write_task = Task(
+#    description=(
+#    "Based on the research, write a clear and friendly response about {topic}. "
+#    "Make the answer easy to understand, practical, and directly useful for the question asked. "
+#    "If relevant, include tips, examples, or next steps."
+#    ),
+#    expected_output=(
+#    "A short, well-structured answer (2-3 paragraphs) in markdown format, "
+#    "providing practical and up-to-date information about {topic}."
+#    ),
     #tools=[tool],
-    agent=news_writer,
-    async_execution=False,
-    #output_file='new-blog-post.md'
-)
+#    agent=news_writer,
+#    async_execution=False,
+#    #output_file='new-blog-post.md'
+#)
 
 # Initialize the crew
 crew = Crew(
-    agents=[news_researcher, news_writer],
-    tasks=[research_task, write_task],
+    agents=[news_researcher],
+    tasks=[research_task],
     process=Process.sequential,
     max_iter=1,
     max_execution_time=8
 )
+
+#location_cache = {}
+
+def resolve_location(user_location, llm):
+    # Check cache first
+    #if user_location in location_cache:
+    #    return location_cache[user_location]
+    # Otherwise, call the LLM
+    location = llm.complete(
+        f"Only give the answer for the question\n"
+        f"If user_location is country, then answer the same name, if it is city, then answer in the country which that city belongs\n"
+        f"What is the location of {user_location}?\n"
+    ).text.strip()
+    # Store in cache
+    #location_cache[user_location] = location
+    return location
 
 def get_persona_feeling(persona_prompt, summary, user_name, language, context="bot", topic="weather"):
     if topic == "news":
@@ -235,6 +255,8 @@ def detect_location_context(user_message, persona_prompt):
         return "user"
     # If user mentions a city directly
     location = re.search(r"weather (in|at|of) ([A-Za-z ]+)", user_message, re.IGNORECASE)
+    if not location:
+        location = re.search(r"news (in|at|of) ([A-Za-z ]+)", user_message, re.IGNORECASE)
     if location:
         location = location.group(2).strip().lower()
         bot_location = extract_bot_location(persona_prompt).lower()# if persona_prompt else "delhi"
@@ -258,12 +280,12 @@ def is_news_query(user_message):
 async def persona_response(user_message, persona_prompt, language, user_name, user_location=None):
     context = detect_location_context(user_message, persona_prompt)
     bot_location = extract_bot_location(persona_prompt)
-    if user_location is None:
-        user_location = extract_user_location(user_message, user_location)
+    user_location = extract_user_location(user_message, user_location)
+    # Initialize LLM once
     api_key = os.environ.get("GEMINI_API_KEY")
     model = "gemini-1.5-flash"
     llm = GoogleGenAI(model=model, api_key=api_key)
-    location = llm.complete(f"Only give the answer for the question\nIf user_location is country, then answer the same name, if it is city, then answer in the country which that city belongs\nWhat is the location of {user_location}?\n")
+    location = resolve_location(user_location, llm)
     if is_news_query(user_message):
         # News flow
         if context == "user":
