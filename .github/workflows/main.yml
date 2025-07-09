@@ -66,7 +66,6 @@ jobs:
 
       - name: Deploy to Cloud Run (Dev)
         run: |
-          gcloud config unset auth/credential_file_override
           gcloud run deploy weathernews-dev \
             --source=. \
             --project=cvoapi \
@@ -76,7 +75,7 @@ jobs:
             --memory=1Gi \
             --cpu=1 \
             --max-instances=10 \
-            --set-env-vars="GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }},GOOGLE_SEARCH_API_KEY=${{ secrets.GOOGLE_SEARCH_API_KEY }},GOOGLE_CSE_ID=${{ secrets.GOOGLE_CSE_ID }},SUPABASE_KEY=${{ secrets.SUPABASE_KEY }},SUPABASE_URL=${{ secrets.SUPABASE_URL }}" \
+            --set-env-vars="SUPABASE_URL=${{ secrets.SUPABASE_URL }},SUPABASE_KEY=${{ secrets.SUPABASE_KEY }},GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }},GOOGLE_SEARCH_API_KEY=${{ secrets.GOOGLE_SEARCH_API_KEY }},GOOGLE_CSE_ID=${{ secrets.GOOGLE_CSE_ID }}" \
             --quiet
 
   deploy-prod:
