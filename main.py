@@ -195,3 +195,5 @@ def insert_bot_message(email, bot_id, message):
         "user_message": "",
         "bot_response": message,
     }).execute()
+    
+    
