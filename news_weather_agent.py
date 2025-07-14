@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 from llama_index.llms.google_genai import GoogleGenAI
 dotenv_path = Path('.env')
 load_dotenv(dotenv_path=dotenv_path)
+import asyncio
 
 # Defining the Google Search function
 def google_search(query, api_key=os.environ.get("GOOGLE_SEARCH_API_KEY"), cse_id=os.environ.get("GOOGLE_CSE_ID"), **kwargs):
@@ -233,60 +234,121 @@ def extract_bot_location(persona_prompt):
         if demonym in persona_prompt.lower():
             return city
     #return "Delhi"
-
 # Function to extract user location from user message or use default
 def extract_user_location(user_message, user_location):
-    # Try to extract a city from the message
-    match = re.search(r"(?:in|at|of)\s+([A-Za-z ]+)", user_message, re.IGNORECASE)
-    if match:
-        return match.group(1).strip()
-    # If user says "my place", "here", etc.
-    if re.search(r"my place|my city|my location|here", user_message, re.IGNORECASE):
-        return user_location
-    return "Hyderabad"
+    print(f"[DEBUG] extract_user_location called with user_message: {user_message}, user_location: {user_location}")
+    api_key = os.environ.get("GEMINI_API_KEY")
+    model = "gemma-3n-e2b-it"
+    llm = GoogleGenAI(model=model, api_key=api_key)
+    llm_prompt = f"""
+Extract the city or location mentioned in the following user message. If the message refers to 'my place', 'my city', 'my location', or 'here', return the user's location: {user_location}. If no location is found, return 'Hyderabad'.
+
+User message: {user_message}
+Respond with only the location name (city or country), nothing else.
+"""
+    #print(f"[DEBUG] LLM prompt for location extraction:\n{llm_prompt}")
+    try:
+        response = llm.complete(llm_prompt)
+        location = response.text.strip()
+        print(f"[DEBUG] LLM extracted location: {location}")
+        if location:
+            return location
+    except Exception as e:
+        print(f"[DEBUG] LLM location extraction failed: {e}")
+    print(f"[DEBUG] Falling back to user_location: {user_location} or 'Hyderabad'")
+    return user_location or "Hyderabad"
 
 # Function to detect whether the context is about the bot's or user's location
 def detect_location_context(user_message, persona_prompt):
+    print(f"[DEBUG] detect_location_context called with user_message: {user_message}")
     # If user asks about "your place", "where you are", etc. → bot's location
     if re.search(r"(your place|where you are|your city|your location|at your end|there)", user_message, re.IGNORECASE):
+        print("[DEBUG] Matched bot location keywords in user_message.")
         return "bot"
     # If user asks about "my place", "here", etc. → user's location
     if re.search(r"(my place|my city|my location|here)", user_message, re.IGNORECASE):
+        print("[DEBUG] Matched user location keywords in user_message.")
         return "user"
     # If user mentions a city directly
     location = re.search(r"weather (in|at|of) ([A-Za-z ]+)", user_message, re.IGNORECASE)
     if not location:
         location = re.search(r"news (in|at|of) ([A-Za-z ]+)", user_message, re.IGNORECASE)
     if location:
-        location = location.group(2).strip().lower()
-        bot_location = extract_bot_location(persona_prompt).lower()# if persona_prompt else "delhi"
-        if location == bot_location:
+        print(f"[DEBUG] Matched city in user_message: {location.group(2).strip()}")
+        bot_location = extract_bot_location(persona_prompt)
+        print(f"[DEBUG] Extracted bot_location: {bot_location}")
+        if bot_location is not None:
+            bot_location = bot_location.lower()
+        else:
+            print("[DEBUG] bot_location is None, defaulting to 'delhi'")
+            bot_location = "delhi"
+        location_str = location.group(2).strip().lower()
+        print(f"[DEBUG] Comparing location '{location_str}' with bot_location '{bot_location}'")
+        if location_str == bot_location:
             return "bot"
         else:
             return "user"
+    print("[DEBUG] No specific location context found, defaulting to bot.")
     return "bot"  # Default to bot's location
 
 # Function to check if the user message is a news query
-def is_news_query(user_message):
-    news_keywords = [
-        "news", "heard", "see", "read", "latest", "update", "incident", "happening",
-        "earthquake", "flood", "protest", "accident", "crime", "festival", "strike",
-        "curfew", "violence", "celebration", "shutdown", "alert", "breaking", "trending"
-    ]
-    pattern = r"|".join([re.escape(word) for word in news_keywords])
-    return re.search(pattern, user_message, re.IGNORECASE) is not None
+#def is_news_query(user_message):
+#    news_keywords = [
+#        "news", "heard", "see", "read", "latest", "update", "incident", "happening",
+#        "earthquake", "flood", "protest", "accident", "crime", "festival", "strike",
+#        "curfew", "violence", "celebration", "shutdown", "alert", "breaking", "trending",
+#        "murder", "investigation"
+#    ]
+#    pattern = r"|".join([re.escape(word) for word in news_keywords])
+#    return re.search(pattern, user_message, re.IGNORECASE) is not None
+
+async def call_gemma_classify(user_message: str) -> str:
+    """
+    Calls the gemma-3n-e2b-it model to classify the user message as 'news', 'weather', or 'other'.
+    """
+    # Improved prompt with explicit instructions and examples
+    prompt = f"""
+Classify the following user message as either 'news', 'weather', or 'other'.
+- If the user message is directly about the weather (e.g., temperature, rain, forecast, climate), then classify it as 'weather'.
+- If the user message is directly about general news, current events, incidents, or happenings in the world, country, or city, then classify it as 'news'.
+- If the user message is about a personal event, someone's life, a private function, or not about general news or weather, then classify it as 'other'.
+
+Examples:
+1. "What's the weather in Delhi?" -> weather
+2. "Tell me the latest news in India." -> news
+3. "What's the news at my brother's marriage?" -> other
+4. "How is the weather at my friend's birthday party?" -> other
+5. "Give me the news about the cricket match in Mumbai." -> news
+6. "Will it rain at my home tomorrow?" -> weather
+
+User message: {user_message}
+Respond with only one word: 'news', 'weather', or 'other'.
+"""
+    #print("[DEBUG] Classification prompt sent to gemma-3n-e2b-it:\n", prompt)
+    api_key = os.environ.get("GEMINI_API_KEY")
+    model = "gemma-3n-e2b-it"
+    llm = GoogleGenAI(model=model, api_key=api_key)
+    response = llm.complete(prompt)
+    print("[DEBUG] LLM raw response:", response.text)
+    result = response.text.strip()
+    print(f"[DEBUG] Classification result for user message '{user_message}': {result}")
+    return result
 
 # Main function to handle user message and persona response
 async def persona_response(user_message, persona_prompt, language, user_name, user_location=None):
+    print(f"[DEBUG] persona_response called with user_message: {user_message}")
     context = detect_location_context(user_message, persona_prompt)
     bot_location = extract_bot_location(persona_prompt)
     user_location = extract_user_location(user_message, user_location)
     # Initialize LLM once
     api_key = os.environ.get("GEMINI_API_KEY")
-    model = "gemini-1.5-flash"
+    model = "gemma-3n-e2b-it"
     llm = GoogleGenAI(model=model, api_key=api_key)
     location = resolve_location(user_location, llm)
-    if is_news_query(user_message):
+    # Use LLM to classify the user message
+    category = await call_gemma_classify(user_message)
+    print(f"[DEBUG] category from call_gemma_classify: {category}")
+    if category == "news":
         # News flow
         if context == "user":
             result = crew.kickoff(inputs={'topic': f'What is the latest National news in {location}? Any present major incidents or events?'})
@@ -294,7 +356,7 @@ async def persona_response(user_message, persona_prompt, language, user_name, us
             result = crew.kickoff(inputs={'topic': f'What is the latest National News in {bot_location}? Any present major incidents or events?'})
         result = str(result)
         response = get_news_response(result, persona_prompt, user_name, language, bot_location, user_location, context)
-    else:
+    elif category == "weather":
         # Weather flow
         if context == "user":
             result = crew.kickoff(inputs={'topic': f'What is the weather in {user_location}?'})
@@ -302,7 +364,9 @@ async def persona_response(user_message, persona_prompt, language, user_name, us
             result = crew.kickoff(inputs={'topic': f'What is the weather in {bot_location}?'})
         result = str(result)
         response = get_weather_response(result, persona_prompt, user_name, language, bot_location, user_location, context)
-    #print(response)
+    else:
+        response = "I don't know what you are talking about."
+    print(f"[DEBUG] Final response: {response}")
     return response
 
 # Function to check if the news summary contains a major event
@@ -315,7 +379,7 @@ def is_major_event(news_text):
         "inflation", "stock market crash", "economic crisis", "policy change", "sanctions",
         "war", "protest", "strike", "currency devaluation", "interest rate hike", "recession",
         "earthquake", "flood", "protest", "accident", "crime", "strike",
-        "curfew", "violence", "celebration", "shutdown", "alert", "breaking", "death"
+        "curfew", "violence", "celebration", "shutdown", "alert", "breaking", "death", "murder", "investigation"
     ]
     pattern = r"|".join([re.escape(word) for word in keywords])
     return re.search(pattern, news_text, re.IGNORECASE) is not None
