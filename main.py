@@ -15,9 +15,11 @@ import logging
 
 #@repeat_every(seconds=60*60*24*7)  # Every 7 days
 def scheduled_weekly_news_summary():
+    print("[DEBUG] Entered scheduled_weekly_news_summary")
     print("=== Running Weekly News Summary for all users/bots ===")
     print("⏰ Running Weekly News Summary task every 7 days")
     for params in get_all_news_agent_params():
+        print(f"[DEBUG] Params for weekly summary: {params}")
         # Pass all required params to your agent function
         summary = generate_weekly_news_summary(
             params["bot_prompt"],  # persona_prompt
@@ -26,6 +28,7 @@ def scheduled_weekly_news_summary():
             params["bot_city"],    # bot_location
             params["user_location"] 
         )
+        print(f"[DEBUG] Generated summary: {summary}")
         insert_bot_message(
             email=params["email"],
             bot_id=params["bot_id"],
@@ -34,9 +37,11 @@ def scheduled_weekly_news_summary():
 
 #@repeat_every(seconds=60*60*6)  # Every 6 hours
 def scheduled_major_event_alert():
+    print("[DEBUG] Entered scheduled_major_event_alert")
     print("=== Checking for Major Events for all users/bots ===")
     print("⏰ Running Major Event Alert task every 6 hours")
     for params in get_all_news_agent_params():
+        print(f"[DEBUG] Params for major event alert: {params}")
         alert = check_and_alert_for_major_events(
             params["bot_prompt"],
             params["user_name"],
@@ -44,6 +49,7 @@ def scheduled_major_event_alert():
             params["bot_city"],
             params["user_location"]
         )
+        print(f"[DEBUG] Alert generated: {alert}")
         if alert:
             insert_bot_message(
                 email=params["email"],
@@ -75,6 +81,7 @@ async def news_weather_agent(request: QuestionRequest):
     """
     Endpoint to handle the news and weather agent functionality.
     """
+    print("[DEBUG] /news_weather_agent endpoint called")
     #fetching bot_prompt from the bot_prompt.py file
     raw_bot_prompt = get_bot_prompt(request.bot_id)
     # Define the bot prompt based on the bot_id
@@ -110,11 +117,13 @@ async def news_weather_agent(request: QuestionRequest):
 
 @app.post("/run_weekly_summary")
 async def run_weekly_summary():
+    print("[DEBUG] /run_weekly_summary endpoint called")
     scheduled_weekly_news_summary()
     return {"status": "Weekly summary triggered"}
 
 @app.post("/run_major_event_alert")
 async def run_major_event_alert():
+    print("[DEBUG] /run_major_event_alert endpoint called")
     scheduled_major_event_alert()
     return {"status": "Major event alert triggered"}
 
@@ -126,35 +135,43 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")  # Supabase API key from environment va
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 # -------------------- Helper Functions --------------------
 def get_today_user_bot_pairs():
+    print("[DEBUG] Entered get_today_user_bot_pairs")
     try:
         utc_now = datetime.now(timezone.utc)
+        print(f"[DEBUG] utc_now: {utc_now}")
         start = datetime.combine(utc_now.date(), time.min, tzinfo=timezone.utc).isoformat()
         end = datetime.combine(utc_now.date(), time.max, tzinfo=timezone.utc).isoformat()
-
+        print(f"[DEBUG] start: {start}, end: {end}")
         response = supabase.table("message_paritition") \
             .select("email, bot_id") \
             .gte("created_at", start) \
             .lte("created_at", end) \
             .execute()
-
+        print(f"[DEBUG] Supabase response: {response}")
         pairs = {(item["email"], item["bot_id"]) for item in response.data if item.get("email") and item.get("bot_id")}
+        print(f"[DEBUG] User-bot pairs: {pairs}")
         return list(pairs)
-
     except Exception as e:
         logging.error(f"Exception in get_today_user_bot_pairs: {e}")
+        print(f"[DEBUG] Exception in get_today_user_bot_pairs: {e}")
         return []
 
 def get_all_news_agent_params():
+    print("[DEBUG] Entered get_all_news_agent_params")
     pairs = get_today_user_bot_pairs()  # [(email, bot_id), ...]
+    print(f"[DEBUG] Pairs: {pairs}")
     params_list = []
     for email, bot_id in pairs:
+        print(f"[DEBUG] Processing email: {email}, bot_id: {bot_id}")
         # Get user details
         user_details = supabase.table("user_details").select("*").eq("email", email).single().execute().data or {}
+        print(f"[DEBUG] user_details: {user_details}")
         user_name = user_details.get("name", email.split("@")[0])
         user_gender = user_details.get("gender", "Other")
         user_city = user_details.get("city") or "India" # Default to "Delhi" if not set
         # Get bot details
         bot_details = supabase.table("bot_personality_details").select("*").eq("bot_id", bot_id).single().execute().data or {}
+        print(f"[DEBUG] bot_details: {bot_details}")
         custom_bot_name = bot_details.get("bot_name", bot_id)
         bot_city = bot_details.get("bot_city", "India") # Default to "India" or "Delhi" if not set
         # Language
@@ -182,10 +199,12 @@ def get_all_news_agent_params():
             "bot_city": bot_city,
             "user_location": user_city
         })
+    print(f"[DEBUG] params_list: {params_list}")
     return params_list
 
 # Function to insert a bot message into database
 def insert_bot_message(email, bot_id, message):
+    print(f"[DEBUG] Inserting bot message for email: {email}, bot_id: {bot_id}, message: {message}")
     """
     Inserts a bot message into the message partition table.
     """

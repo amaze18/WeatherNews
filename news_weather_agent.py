@@ -261,35 +261,29 @@ Respond with only the location name (city or country), nothing else.
 # Function to detect whether the context is about the bot's or user's location
 def detect_location_context(user_message, persona_prompt):
     print(f"[DEBUG] detect_location_context called with user_message: {user_message}")
-    # If user asks about "your place", "where you are", etc. → bot's location
-    if re.search(r"(your place|where you are|your city|your location|at your end|there)", user_message, re.IGNORECASE):
-        print("[DEBUG] Matched bot location keywords in user_message.")
-        return "bot"
-    # If user asks about "my place", "here", etc. → user's location
-    if re.search(r"(my place|my city|my location|here)", user_message, re.IGNORECASE):
-        print("[DEBUG] Matched user location keywords in user_message.")
-        return "user"
-    # If user mentions a city directly
-    location = re.search(r"weather (in|at|of) ([A-Za-z ]+)", user_message, re.IGNORECASE)
-    if not location:
-        location = re.search(r"news (in|at|of) ([A-Za-z ]+)", user_message, re.IGNORECASE)
-    if location:
-        print(f"[DEBUG] Matched city in user_message: {location.group(2).strip()}")
-        bot_location = extract_bot_location(persona_prompt)
-        print(f"[DEBUG] Extracted bot_location: {bot_location}")
-        if bot_location is not None:
-            bot_location = bot_location.lower()
-        else:
-            print("[DEBUG] bot_location is None, defaulting to 'delhi'")
-            bot_location = "delhi"
-        location_str = location.group(2).strip().lower()
-        print(f"[DEBUG] Comparing location '{location_str}' with bot_location '{bot_location}'")
-        if location_str == bot_location:
-            return "bot"
-        else:
-            return "user"
-    print("[DEBUG] No specific location context found, defaulting to bot.")
-    return "bot"  # Default to bot's location
+    bot_location = extract_bot_location(persona_prompt)
+    print(f"[DEBUG] Extracted bot_location: {bot_location}")
+    api_key = os.environ.get("GEMINI_API_KEY")
+    model = "gemma-3n-e2b-it"
+    llm = GoogleGenAI(model=model, api_key=api_key)
+    llm_prompt = f"""
+Given the user message and the bot's location, decide if the user is asking about the bot's location or another location.
+- If the user is asking about the bot's location, respond with 'bot'.
+- If the user is asking about a different location (even if the user is not from there), respond with 'user'.
+User message: {user_message}
+Bot location: {bot_location}
+Respond with only one word: 'bot' or 'user'.
+"""
+    try:
+        response = llm.complete(llm_prompt)
+        context_decision = response.text.strip().lower()
+        print(f"[DEBUG] LLM context decision: {context_decision}")
+        if context_decision in ["bot", "user"]:
+            return context_decision
+    except Exception as e:
+        print(f"[DEBUG] LLM context decision failed: {e}")
+    print("[DEBUG] LLM context decision failed or invalid, defaulting to 'bot'.")
+    return "bot"
 
 # Function to check if the user message is a news query
 #def is_news_query(user_message):
@@ -320,6 +314,7 @@ Examples:
 4. "How is the weather at my friend's birthday party?" -> other
 5. "Give me the news about the cricket match in Mumbai." -> news
 6. "Will it rain at my home tomorrow?" -> weather
+7. "What's the news at my brother's marriage?" -> other
 
 User message: {user_message}
 Respond with only one word: 'news', 'weather', or 'other'.
