@@ -364,6 +364,21 @@ async def persona_response(user_message, persona_prompt, language, user_name, us
     print(f"[DEBUG] Final response: {response}")
     return response
 
+# Function to check if the weather summary contains interesting weather conditions
+def is_interesting_weather(weather_text):
+    """
+    Returns True if the weather text contains interesting weather conditions that warrant an alert.
+    """
+    keywords = [
+        "storm", "thunderstorm", "heavy rain", "downpour", "flooding", "hailstorm",
+        "heat wave", "cold wave", "freezing", "snow", "blizzard", "cyclone", "hurricane",
+        "tornado", "extreme", "severe", "warning", "alert", "advisory", "dangerous",
+        "record high", "record low", "unusual", "unprecedented", "fog", "smog",
+        "very hot", "very cold", "scorching", "chilly", "humid"
+    ]
+    pattern = r"|".join([re.escape(word) for word in keywords])
+    return re.search(pattern, weather_text, re.IGNORECASE) is not None
+
 # Function to check if the news summary contains a major event
 def is_major_event(news_text):
     """
@@ -398,24 +413,97 @@ def generate_weekly_news_summary(persona_prompt, user_name, language,bot_locatio
     return response
 
 
-#  Event-Driven News Alert Function
-def check_and_alert_for_major_events(persona_prompt, user_name, language,bot_location, user_location = "India"):
+# Weather Alert Function for User Location
+def check_and_alert_for_weather_user(persona_prompt, user_name, language, bot_location, user_location="India"):
     """
-    Checks for major political/economic/tragid events and generates an alert if found.
+    Checks for interesting weather conditions in user location and generates an alert if found.
     """
-    api_key = os.environ.get("GEMINI_API_KEY")
-    model = "gemini-1.5-flash"
-    llm = GoogleGenAI(model=model, api_key=api_key)
-    location = llm.complete(f"Only give the answer for the question\nIf user_location is country, then answer the same name, if it is city, then answer in the country which that city belongs\nWhat is the location of {user_location}?\n")
-    topic = f"Latest National news in {location}"
-    result = crew.kickoff(inputs={'topic': topic})
-    news_summary = str(result)
-    if is_major_event(news_summary):
-        response = get_news_response(
-            news_summary, persona_prompt, user_name, language, bot_location, user_location, context="user"
-        )
-        #print(f"🚨 Major Event Alert for {user_location}:\n{response}")
-        return response
-    else:
-        print("No major political/economic/tragid event detected.")
+    try:
+        topic = f"Current weather conditions and forecast for {user_location}"
+        result = crew.kickoff(inputs={'topic': topic})
+        weather_summary = str(result)
+        if is_interesting_weather(weather_summary):
+            response = get_weather_response(
+                weather_summary, persona_prompt, user_name, language, bot_location, user_location, context="user"
+            )
+            return response
+        else:
+            print(f"No interesting weather conditions detected for {user_location}.")
+            return None
+    except Exception as e:
+        print(f"Error in weather alert for user location: {e}")
         return None
+
+# Weather Alert Function for Bot Location
+def check_and_alert_for_weather_bot(persona_prompt, user_name, language, bot_location, user_location="India"):
+    """
+    Checks for interesting weather conditions in bot location and generates an alert if found.
+    """
+    try:
+        topic = f"Current weather conditions and forecast for {bot_location}"
+        result = crew.kickoff(inputs={'topic': topic})
+        weather_summary = str(result)
+        if is_interesting_weather(weather_summary):
+            response = get_weather_response(
+                weather_summary, persona_prompt, user_name, language, bot_location, user_location, context="bot"
+            )
+            return response
+        else:
+            print(f"No interesting weather conditions detected for {bot_location}.")
+            return None
+    except Exception as e:
+        print(f"Error in weather alert for bot location: {e}")
+        return None
+
+#  Event-Driven News Alert Function for User Location
+def check_and_alert_for_major_events_user(persona_prompt, user_name, language, bot_location, user_location="India"):
+    """
+    Checks for major political/economic/tragic events in user location and generates an alert if found.
+    """
+    try:
+        api_key = os.environ.get("GEMINI_API_KEY")
+        model = "gemini-1.5-flash"
+        llm = GoogleGenAI(model=model, api_key=api_key)
+        location = llm.complete(f"Only give the answer for the question\nIf user_location is country, then answer the same name, if it is city, then answer in the country which that city belongs\nWhat is the location of {user_location}?\n")
+        topic = f"Latest National news in {location}"
+        result = crew.kickoff(inputs={'topic': topic})
+        news_summary = str(result)
+        if is_major_event(news_summary):
+            response = get_news_response(
+                news_summary, persona_prompt, user_name, language, bot_location, user_location, context="user"
+            )
+            return response
+        else:
+            print(f"No major political/economic/tragic event detected for {user_location}.")
+            return None
+    except Exception as e:
+        print(f"Error in news alert for user location: {e}")
+        return None
+
+#  Event-Driven News Alert Function for Bot Location
+def check_and_alert_for_major_events_bot(persona_prompt, user_name, language, bot_location, user_location="India"):
+    """
+    Checks for major political/economic/tragic events in bot location and generates an alert if found.
+    """
+    try:
+        topic = f"Latest National news in {bot_location}"
+        result = crew.kickoff(inputs={'topic': topic})
+        news_summary = str(result)
+        if is_major_event(news_summary):
+            response = get_news_response(
+                news_summary, persona_prompt, user_name, language, bot_location, user_location, context="bot"
+            )
+            return response
+        else:
+            print(f"No major political/economic/tragic event detected for {bot_location}.")
+            return None
+    except Exception as e:
+        print(f"Error in news alert for bot location: {e}")
+        return None
+
+# Legacy function for backward compatibility - now points to user location
+def check_and_alert_for_major_events(persona_prompt, user_name, language, bot_location, user_location="India"):
+    """
+    Legacy function - now calls the user location version for backward compatibility.
+    """
+    return check_and_alert_for_major_events_user(persona_prompt, user_name, language, bot_location, user_location)
