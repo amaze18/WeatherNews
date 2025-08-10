@@ -64,7 +64,7 @@ Enhanced the existing news and weather agent system to include comprehensive pro
 - Implements time-based filtering to prevent duplicate messages
 
 ### User-Bot Pair Detection:
-- Automatically detects active user-bot pairs from recent conversations
+- Automatically detects user-bot pairs from conversations that happened today only
 - Fetches user and bot details from `user_details` and `bot_personality_details` tables
 
 ## Key Benefits
@@ -92,3 +92,29 @@ Enhanced the existing news and weather agent system to include comprehensive pro
 The system automatically starts when the FastAPI application launches. All scheduled tasks are registered as startup event handlers and will run according to their configured intervals.
 
 For manual testing or debugging, use the provided API endpoints to trigger specific alert types on demand.
+
+## Testing
+
+Run the test script to verify the system is working:
+
+```bash
+python test_proactive_alerts.py
+```
+
+This will test:
+1. Today's user-bot pair detection
+2. Parameter retrieval
+3. Staggered delay calculation
+4. Spam prevention logic
+5. Full proactive message system
+
+## Recent Fixes
+
+### Fixed Issues:
+1. **Async Function**: Made `scheduled_staggered_proactive_alerts()` async to properly handle async operations
+2. **Message Pattern Matching**: Fixed message type patterns in `should_send_proactive_message()` to match actual message prefixes
+3. **User Detection**: Uses today's user-bot pairs only for proactive messaging
+4. **Error Handling**: Improved error handling and logging throughout the system
+
+### System Status:
+✅ **Ready for Production**: All proactive messages should now work correctly with proper staggered timing and spam prevention.

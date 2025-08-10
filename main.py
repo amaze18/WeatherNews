@@ -128,22 +128,22 @@ async def send_staggered_proactive_messages():
         bot_id = params["bot_id"]
         
         # Weather alert for user location - every 12 hours
-        if should_send_proactive_message(email, bot_id, "weather", min_interval_hours=12):
+        if should_send_proactive_message(email, bot_id, "[WEATHER_USER]", min_interval_hours=12):
             delay = get_staggered_delay(email, bot_id, 0, 6)  # Spread over 6 hours
             tasks.append(send_weather_alert_user_delayed(delay, params))
         
         # Weather alert for bot location - every 12 hours  
-        if should_send_proactive_message(email, bot_id, "weather_bot", min_interval_hours=12):
+        if should_send_proactive_message(email, bot_id, "[WEATHER_BOT]", min_interval_hours=12):
             delay = get_staggered_delay(email, bot_id, 6, 6)  # Spread over next 6 hours
             tasks.append(send_weather_alert_bot_delayed(delay, params))
         
         # News alert for user location - every 8 hours
-        if should_send_proactive_message(email, bot_id, "news_user", min_interval_hours=8):
+        if should_send_proactive_message(email, bot_id, "[NEWS_USER]", min_interval_hours=8):
             delay = get_staggered_delay(email, bot_id, 12, 4)  # Spread over 4 hours
             tasks.append(send_news_alert_user_delayed(delay, params))
         
         # News alert for bot location - every 8 hours
-        if should_send_proactive_message(email, bot_id, "news_bot", min_interval_hours=8):
+        if should_send_proactive_message(email, bot_id, "[NEWS_BOT]", min_interval_hours=8):
             delay = get_staggered_delay(email, bot_id, 16, 4)  # Spread over next 4 hours
             tasks.append(send_news_alert_bot_delayed(delay, params))
     
@@ -237,12 +237,12 @@ async def send_news_alert_bot_delayed(delay_seconds, params):
         print(f"[DEBUG] Error sending news alert for bot: {e}")
 
 @repeat_every(seconds=60*60*4)  # Every 4 hours
-def scheduled_staggered_proactive_alerts():
+async def scheduled_staggered_proactive_alerts():
     """
     Trigger staggered proactive alerts every 4 hours.
     """
     print("[DEBUG] Starting scheduled staggered proactive alerts")
-    asyncio.create_task(send_staggered_proactive_messages())
+    await send_staggered_proactive_messages()
 app = FastAPI()
 
 # Define a Pydantic model for the incoming request body
