@@ -269,7 +269,9 @@ def detect_location_context(user_message, persona_prompt):
     llm_prompt = f"""
 Given the user message and the bot's location, decide if the user is asking about the bot's location or another location.
 - If the user is asking about the bot's location, respond with 'bot'.
-- If the user is asking about a different location (even if the user is not from there), respond with 'user'.
+- If the user is asking about a different location (even if the user is not from there but the bot location and the user mentioned location in the message is same), respond with 'bot'.
+- If the user is asking about a different location (even if the user is not from there but bot is not from there), respond with 'user'.
+
 User message: {user_message}
 Bot location: {bot_location}
 Respond with only one word: 'bot' or 'user'.
@@ -309,12 +311,14 @@ Classify the following user message as either 'news', 'weather', or 'other'.
 
 Examples:
 1. "What's the weather in Delhi?" -> weather
-2. "Tell me the latest news in India." -> news
-3. "What's the news at my brother's marriage?" -> other
-4. "How is the weather at my friend's birthday party?" -> other
-5. "Give me the news about the cricket match in Mumbai." -> news
-6. "Will it rain at my home tomorrow?" -> weather
-7. "What's the news at my brother's marriage?" -> other
+2. "How's the weather in Delhi?" -> weather
+3. "How's is weather in Delhi?" -> weather
+4. "Tell me the latest news in India." -> news
+5. "What's the news at my brother's marriage?" -> other
+6. "How is the weather at my friend's birthday party?" -> other
+7. "Give me the news about the cricket match in Mumbai." -> news
+8. "Will it rain at my home tomorrow?" -> weather
+9. "What's the news at my brother's marriage?" -> other
 
 User message: {user_message}
 Respond with only one word: 'news', 'weather', or 'other'.
@@ -360,7 +364,7 @@ async def persona_response(user_message, persona_prompt, language, user_name, us
         result = str(result)
         response = get_weather_response(result, persona_prompt, user_name, language, bot_location, user_location, context)
     else:
-        response = "I don't know what you are talking about."
+        response = "umm, sorry my phone died, what were you asking?!"
     print(f"[DEBUG] Final response: {response}")
     return response
 
