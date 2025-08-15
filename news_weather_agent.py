@@ -9,18 +9,42 @@ import re, os
 from pathlib import Path
 from dotenv import load_dotenv
 from llama_index.llms.google_genai import GoogleGenAI
+
+# Load environment variables from .env file
 dotenv_path = Path('.env')
 load_dotenv(dotenv_path=dotenv_path)
 import asyncio
 
-# Defining the Google Search function
+# --- Google Search Functionality ---
+
 def google_search(query, api_key=os.environ.get("GOOGLE_SEARCH_API_KEY"), cse_id=os.environ.get("GOOGLE_CSE_ID"), **kwargs):
+    """
+    Perform a Google search using the Custom Search JSON API.
+
+    Args:
+        query (str): The search query.
+        api_key (str): API key for Google Custom Search.
+        cse_id (str): Custom Search Engine ID.
+        **kwargs: Additional parameters for the search.
+
+    Returns:
+        list: A list of search result items.
+    """
     service = build("customsearch", "v1", developerKey=api_key)
     res = service.cse().list(q=query, cx=cse_id, **kwargs).execute()
     return res.get('items', [])
 
 # Function to fetch page content
 def fetch_page_content(url):
+    """
+    Fetch the content of a webpage and return its text.
+
+    Args:
+        url (str): The URL of the webpage to fetch.
+
+    Returns:
+        str: Extracted text content from the webpage.
+    """
     try:
         headers = {"User-Agent": "Mozilla/5.0"}
         response = requests.get(url, headers=headers, timeout=1.5)
@@ -31,12 +55,25 @@ def fetch_page_content(url):
     except Exception as e:
         return f"Error fetching page: {e}"
 
-# Custom tool for Google Search and Page Fetch
+# --- Custom Tool for Google Search and Page Fetch ---
+
 class GoogleSearchAndFetchTool(BaseTool):
+    """
+    Custom tool to perform a Google search and fetch summaries of the top result pages.
+    """
     name: str = "Google Search with Page Fetch"
     description: str = "Performs a Google search and fetches a summary of the top 3 result pages."
 
     def _run(self, query: str) -> str:
+        """
+        Execute the tool with the given query.
+
+        Args:
+            query (str): The search query.
+
+        Returns:
+            str: Summarized content of the top search results.
+        """
         if "news" in query.lower():
             query = f"site:news.google.com {query}"
         print(query)
@@ -53,7 +90,9 @@ class GoogleSearchAndFetchTool(BaseTool):
 # Initialize the custom tool
 custom_google_search_tool = GoogleSearchAndFetchTool()
 
-# Define agents
+# --- Define Agents ---
+
+# Define the news researcher agent
 llm = 'gemini/gemini-1.5-flash'
 
 news_researcher = Agent(
@@ -95,7 +134,7 @@ research_task = Task(
     "A concise summary with key facts, recommendations, or current status about {topic}, "
     "suitable for someone seeking real-world, actionable information."
     ),
-    tools=[custom_google_search_tool], # Use the initialized custom tool
+    tools=[custom_google_search_tool],  # Use the initialized custom tool
     agent=news_researcher,
 )
 
@@ -124,23 +163,41 @@ crew = Crew(
     max_execution_time=8
 )
 
-#location_cache = {}
+# --- Helper Functions ---
 
 def resolve_location(user_location, llm):
-    # Check cache first
-    #if user_location in location_cache:
-    #    return location_cache[user_location]
-    # Otherwise, call the LLM
+    """
+    Resolve the location of a user using the LLM.
+
+    Args:
+        user_location (str): The user's location (city or country).
+        llm: The language model instance.
+
+    Returns:
+        str: Resolved location.
+    """
     location = llm.complete(
         f"Only give the answer for the question\n"
         f"If user_location is country, then answer the same name, if it is city, then answer in the country which that city belongs\n"
         f"What is the location of {user_location}?\n"
     ).text.strip()
-    # Store in cache
-    #location_cache[user_location] = location
     return location
 
 def get_persona_feeling(persona_prompt, summary, user_name, language, context="bot", topic="weather"):
+    """
+    Determine the feeling or emotional response of a persona to a given news or weather summary.
+
+    Args:
+        persona_prompt (str): The persona's prompt.
+        summary (str): The news or weather summary.
+        user_name (str): The user's name.
+        language (str): The language for the response.
+        context (str, optional): The context of the response ('bot' or 'user').
+        topic (str, optional): The topic of the summary ('news' or 'weather').
+
+    Returns:
+        str: The persona's feeling or emotional response.
+    """
     if topic == "news":
         if context == "user":
             llm_prompt = f"""
@@ -196,9 +253,25 @@ Format: Only say how you feel, in {language}, as if talking to a friend named {u
 
 # Function to get weather response based on summary and persona
 def get_weather_response(weather_summary, persona_prompt, user_name, language, bot_location, user_location = None , context = "bot"):
+    """
+    Generate a weather response based on the summary and persona.
+
+    Args:
+        weather_summary (str): The weather summary.
+        persona_prompt (str): The persona's prompt.
+        user_name (str): The user's name.
+        language (str): The language for the response.
+        bot_location (str): The bot's location.
+        user_location (str, optional): The user's location.
+        context (str, optional): The context of the response ('bot' or 'user').
+
+    Returns:
+        str: The generated weather response.
+    """
     match = re.search(r"(sunny|cloudy|rainy|humid|very warm|pleasant|chilly|hot|cold|breezy|stormy|clear|overcast)", weather_summary, re.IGNORECASE)
     weather_desc = match.group(1).lower() if match else "pleasant"
     feeling = get_persona_feeling(persona_prompt, weather_summary, user_name, language, context)
+    detect_location_context
     if context == "user":
         if user_location is None:
             return f"I don't know where you live."
@@ -208,6 +281,21 @@ def get_weather_response(weather_summary, persona_prompt, user_name, language, b
     
 # Function to get news response based on summary and persona
 def get_news_response(news_summary, persona_prompt, user_name, language, bot_location, user_location=None, context="bot"):
+    """
+    Generate a news response based on the summary and persona.
+
+    Args:
+        news_summary (str): The news summary.
+        persona_prompt (str): The persona's prompt.
+        user_name (str): The user's name.
+        language (str): The language for the response.
+        bot_location (str): The bot's location.
+        user_location (str, optional): The user's location.
+        context (str, optional): The context of the response ('bot' or 'user').
+
+    Returns:
+        str: The generated news response.
+    """
     # Extract a main event/incident keyword for variety
     #match = re.search(r"(earthquake|flood|protest|accident|crime|festival|strike|curfew|violence|celebration|shutdown|alert|breaking|trending|election|government collapse|cabinet reshuffle|inflation|stock market crash|economic crisis|policy change|war|currency devaluation|interest rate hike|recession)", news_summary, re.IGNORECASE)
     #news_desc = match.group(1).lower() if match else "something interesting"
@@ -222,6 +310,15 @@ def get_news_response(news_summary, persona_prompt, user_name, language, bot_loc
 
 # Function to extract bot's location from persona prompt
 def extract_bot_location(persona_prompt):
+    """
+    Extract the bot's location from the persona prompt.
+
+    Args:
+        persona_prompt (str): The persona's prompt.
+
+    Returns:
+        str: The extracted bot location.
+    """
     match = re.search(r'(?:from|raised in|born in|born and raised in)\s+([A-Za-z ]+)[\.,]', persona_prompt[:120], re.IGNORECASE)
     if match:
         return match.group(1).strip()
@@ -236,6 +333,16 @@ def extract_bot_location(persona_prompt):
     #return "Delhi"
 # Function to extract user location from user message or use default
 def extract_user_location(user_message, user_location):
+    """
+    Extract the user's location from the user message or use the default location.
+
+    Args:
+        user_message (str): The user message.
+        user_location (str): The default user location.
+
+    Returns:
+        str: The extracted or default user location.
+    """
     print(f"[DEBUG] extract_user_location called with user_message: {user_message}, user_location: {user_location}")
     api_key = os.environ.get("GEMINI_API_KEY")
     model = "gemma-3n-e2b-it"
@@ -260,6 +367,16 @@ Respond with only the location name (city or country), nothing else.
 
 # Function to detect whether the context is about the bot's or user's location
 def detect_location_context(user_message, persona_prompt):
+    """
+    Detect the context of the location in the user message.
+
+    Args:
+        user_message (str): The user message.
+        persona_prompt (str): The persona's prompt.
+
+    Returns:
+        str: The detected context ('bot' or 'user').
+    """
     print(f"[DEBUG] detect_location_context called with user_message: {user_message}")
     bot_location = extract_bot_location(persona_prompt)
     print(f"[DEBUG] Extracted bot_location: {bot_location}")
@@ -287,20 +404,17 @@ Respond with only one word: 'bot' or 'user'.
     print("[DEBUG] LLM context decision failed or invalid, defaulting to 'bot'.")
     return "bot"
 
-# Function to check if the user message is a news query
-#def is_news_query(user_message):
-#    news_keywords = [
-#        "news", "heard", "see", "read", "latest", "update", "incident", "happening",
-#        "earthquake", "flood", "protest", "accident", "crime", "festival", "strike",
-#        "curfew", "violence", "celebration", "shutdown", "alert", "breaking", "trending",
-#        "murder", "investigation"
-#    ]
-#    pattern = r"|".join([re.escape(word) for word in news_keywords])
-#    return re.search(pattern, user_message, re.IGNORECASE) is not None
+# --- Classification Functionality ---
 
 async def call_gemma_classify(user_message: str) -> str:
     """
     Calls the gemma-3n-e2b-it model to classify the user message as 'news', 'weather', or 'other'.
+
+    Args:
+        user_message (str): The user message.
+
+    Returns:
+        str: The classification result ('news', 'weather', or 'other').
     """
     # Improved prompt with explicit instructions and examples
     prompt = f"""
@@ -333,8 +447,22 @@ Respond with only one word: 'news', 'weather', or 'other'.
     print(f"[DEBUG] Classification result for user message '{user_message}': {result}")
     return result
 
-# Main function to handle user message and persona response
+# --- Main Functionality ---
+
 async def persona_response(user_message, persona_prompt, language, user_name, user_location=None):
+    """
+    Generate a persona-based response to a user message.
+
+    Args:
+        user_message (str): The user's message.
+        persona_prompt (str): The persona's prompt.
+        language (str): The language for the response.
+        user_name (str): The user's name.
+        user_location (str, optional): The user's location.
+
+    Returns:
+        str: The generated response.
+    """
     print(f"[DEBUG] persona_response called with user_message: {user_message}")
     context = detect_location_context(user_message, persona_prompt)
     bot_location = extract_bot_location(persona_prompt)
@@ -368,10 +496,18 @@ async def persona_response(user_message, persona_prompt, language, user_name, us
     print(f"[DEBUG] Final response: {response}")
     return response
 
+# --- Monitoring and Alerting Functions ---
+
 # Function to check if the weather summary contains interesting weather conditions
 def is_interesting_weather(weather_text):
     """
     Returns True if the weather text contains interesting weather conditions that warrant an alert.
+
+    Args:
+        weather_text (str): The weather text.
+
+    Returns:
+        bool: True if interesting weather conditions are present, False otherwise.
     """
     keywords = [
         "storm", "thunderstorm", "heavy rain", "downpour", "flooding", "hailstorm",
@@ -387,6 +523,12 @@ def is_interesting_weather(weather_text):
 def is_major_event(news_text):
     """
     Returns True if the news text contains major political, economic or tragid event keywords.
+
+    Args:
+        news_text (str): The news text.
+
+    Returns:
+        bool: True if a major event is detected, False otherwise.
     """
     keywords = [
         "election", "government collapse", "cabinet reshuffle",
@@ -402,6 +544,16 @@ def is_major_event(news_text):
 def generate_weekly_news_summary(persona_prompt, user_name, language,bot_location, user_location = "India"):
     """
     Generates a weekly news summary for the given user location.
+
+    Args:
+        persona_prompt (str): The persona's prompt.
+        user_name (str): The user's name.
+        language (str): The language for the response.
+        bot_location (str): The bot's location.
+        user_location (str, optional): The user's location.
+
+    Returns:
+        str: The generated weekly news summary.
     """
     api_key = os.environ.get("GEMINI_API_KEY")
     model = "gemini-1.5-flash"
@@ -421,18 +573,33 @@ def generate_weekly_news_summary(persona_prompt, user_name, language,bot_locatio
 def check_and_alert_for_weather_user(persona_prompt, user_name, language, bot_location, user_location="India"):
     """
     Checks for interesting weather conditions in user location and generates an alert if found.
+
+    Args:
+        persona_prompt (str): The persona's prompt.
+        user_name (str): The user's name.
+        language (str): The language for the response.
+        bot_location (str): The bot's location.
+        user_location (str, optional): The user's location.
+
+    Returns:
+        str or None: The weather alert response or None if no interesting conditions are found.
     """
     try:
         topic = f"Current weather conditions and forecast for {user_location}"
         result = crew.kickoff(inputs={'topic': topic})
         weather_summary = str(result)
         if is_interesting_weather(weather_summary):
-            response = get_weather_response(
-                weather_summary, persona_prompt, user_name, language, bot_location, user_location, context="user"
-            )
+            if user_location == bot_location:
+                response = get_weather_response(
+                    weather_summary, persona_prompt, user_name, language, bot_location, user_location, context="bot"
+                )
+            else :
+                response = get_weather_response(
+                    weather_summary, persona_prompt, user_name, language, bot_location, user_location, context="user"
+                )
             return response
         else:
-            print(f"No interesting weather conditions detected for {user_location}.")
+            print(f"No interesting weather conditions for {user_location}.")
             return None
     except Exception as e:
         print(f"Error in weather alert for user location: {e}")
@@ -442,6 +609,16 @@ def check_and_alert_for_weather_user(persona_prompt, user_name, language, bot_lo
 def check_and_alert_for_weather_bot(persona_prompt, user_name, language, bot_location, user_location="India"):
     """
     Checks for interesting weather conditions in bot location and generates an alert if found.
+
+    Args:
+        persona_prompt (str): The persona's prompt.
+        user_name (str): The user's name.
+        language (str): The language for the response.
+        bot_location (str): The bot's location.
+        user_location (str, optional): The user's location.
+
+    Returns:
+        str or None: The weather alert response or None if no interesting conditions are found.
     """
     try:
         topic = f"Current weather conditions and forecast for {bot_location}"
@@ -453,7 +630,7 @@ def check_and_alert_for_weather_bot(persona_prompt, user_name, language, bot_loc
             )
             return response
         else:
-            print(f"No interesting weather conditions detected for {bot_location}.")
+            print(f"No interesting weather conditions for {bot_location}.")
             return None
     except Exception as e:
         print(f"Error in weather alert for bot location: {e}")
@@ -463,6 +640,16 @@ def check_and_alert_for_weather_bot(persona_prompt, user_name, language, bot_loc
 def check_and_alert_for_major_events_user(persona_prompt, user_name, language, bot_location, user_location="India"):
     """
     Checks for major political/economic/tragic events in user location and generates an alert if found.
+
+    Args:
+        persona_prompt (str): The persona's prompt.
+        user_name (str): The user's name.
+        language (str): The language for the response.
+        bot_location (str): The bot's location.
+        user_location (str, optional): The user's location.
+
+    Returns:
+        str or None: The news alert response or None if no major events are found.
     """
     try:
         api_key = os.environ.get("GEMINI_API_KEY")
@@ -488,6 +675,16 @@ def check_and_alert_for_major_events_user(persona_prompt, user_name, language, b
 def check_and_alert_for_major_events_bot(persona_prompt, user_name, language, bot_location, user_location="India"):
     """
     Checks for major political/economic/tragic events in bot location and generates an alert if found.
+
+    Args:
+        persona_prompt (str): The persona's prompt.
+        user_name (str): The user's name.
+        language (str): The language for the response.
+        bot_location (str): The bot's location.
+        user_location (str, optional): The user's location.
+
+    Returns:
+        str or None: The news alert response or None if no major events are found.
     """
     try:
         topic = f"Latest National news in {bot_location}"
@@ -509,5 +706,15 @@ def check_and_alert_for_major_events_bot(persona_prompt, user_name, language, bo
 def check_and_alert_for_major_events(persona_prompt, user_name, language, bot_location, user_location="India"):
     """
     Legacy function - now calls the user location version for backward compatibility.
+
+    Args:
+        persona_prompt (str): The persona's prompt.
+        user_name (str): The user's name.
+        language (str): The language for the response.
+        bot_location (str): The bot's location.
+        user_location (str, optional): The user's location.
+
+    Returns:
+        str or None: The news alert response or None if no major events are found.
     """
     return check_and_alert_for_major_events_user(persona_prompt, user_name, language, bot_location, user_location)
