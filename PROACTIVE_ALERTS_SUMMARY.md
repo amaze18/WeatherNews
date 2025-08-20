@@ -1,120 +1,57 @@
-# Proactive Alerts System - Implementation Summary
+# Proactive Alerts System — Current Implementation Summary
 
-## Overview
-Enhanced the existing news and weather agent system to include comprehensive proactive alerts with staggered timing to prevent all messages from being sent simultaneously.
+This document describes the proactive alerting features actually implemented in this repository and highlights recent code-level improvements (comments, docstrings, and clearer scheduling). It intentionally focuses on what is present in code rather than speculative or planned features.
 
-## New Features Added
+## High-level overview
+- Weekly news summary is scheduled using FastAPI's `repeat_every` decorator.
+- APScheduler is used to run proactive jobs (weather/news) at fixed times of day.
+- Manual API endpoints are available to trigger scheduled tasks for testing.
+- Supabase is used as the backing store for messages, user details, and bot personality details.
+- Several helper functions provide user-bot pair detection and message insertion.
 
-### 1. Weather Alert Functions
-- **`check_and_alert_for_weather_user()`**: Monitors weather conditions in user's location
-- **`check_and_alert_for_weather_bot()`**: Monitors weather conditions in bot's location
-- **`is_interesting_weather()`**: Determines if weather conditions warrant an alert (storms, extreme temperatures, etc.)
+## Implemented features (what's in the code)
 
-### 2. Enhanced News Alert Functions
-- **`check_and_alert_for_major_events_user()`**: Checks for major news events in user's location
-- **`check_and_alert_for_major_events_bot()`**: Checks for major news events in bot's location
-- Maintained backward compatibility with existing `check_and_alert_for_major_events()` function
+1) Scheduled weekly summary
+- `scheduled_weekly_news_summary()` — decorated with `@repeat_every(seconds=60*60*24*7)` to run once every 7 days. It collects agent parameters and stores generated weekly summaries via `insert_bot_message()`.
 
-### 3. Staggered Scheduling System
-- **`get_staggered_delay()`**: Creates deterministic pseudo-random delays based on user email and bot ID
-- **`should_send_proactive_message()`**: Prevents spam by checking if enough time has passed since last message
-- **`send_staggered_proactive_messages()`**: Orchestrates all proactive alerts with proper delays
+2) APScheduler-based proactive jobs
+- `start_scheduler()` initializes an APScheduler `BackgroundScheduler` and registers three jobs:
+	- `send_weather_user_alerts` — scheduled at 08:00
+	- `send_weather_bot_alerts` — scheduled at 14:00
+	- `send_news_user_alerts` — scheduled at 19:00
 
-## Scheduling Intervals
+3) Manual endpoints for testing and on-demand runs
+- `POST /run_weekly_summary` — manually trigger the weekly summary task
+- `POST /run_major_event_alert` — manually trigger the major event alert flow
+- `POST /run_weather_alerts_user`, `POST /run_weather_alerts_bot`, `POST /run_news_alerts_bot` — endpoints to run specific alert types for testing
 
-### Proactive Alert Types:
-1. **Weather Alerts (User Location)**: Every 12 hours, spread over 6 hours
-2. **Weather Alerts (Bot Location)**: Every 12 hours, spread over next 6 hours  
-3. **News Alerts (User Location)**: Every 8 hours, spread over 4 hours
-4. **News Alerts (Bot Location)**: Every 8 hours, spread over next 4 hours
-5. **Weekly News Summary**: Every 7 days (existing)
+4) Supabase integration and helper utilities
+- `SUPABASE_URL` and `SUPABASE_KEY` are read from environment variables and used to create a Supabase client.
+- `get_today_user_bot_pairs()` — fetches unique (email, bot_id) pairs from today's messages (table `message_paritition`).
+- `get_all_news_agent_params()` — for each pair it loads `user_details` and `bot_personality_details`, formats the bot prompt using `get_bot_prompt()`, and returns a params list used by alert tasks.
+- `insert_bot_message(email, bot_id, message)` — inserts a bot response into `message_paritition`.
 
-### Main Scheduler:
-- **Staggered Proactive Alerts**: Runs every 4 hours to trigger the above alerts
+5) News & Weather agent functions (in `news_weather_agent.py`)
+- `persona_response(...)` — main async function that classifies messages (news/weather/other), calls the crew agent, and returns persona-based replies.
+- `generate_weekly_news_summary(...)`, `check_and_alert_for_weather_user(...)`, `check_and_alert_for_weather_bot(...)`, `check_and_alert_for_major_events_user(...)`, `check_and_alert_for_major_events_bot(...)` — implemented in `news_weather_agent.py` and used by the scheduled routines.
 
-## Time Gap Implementation
+## Important configuration / environment variables
 
-### Deterministic Staggering:
-- Uses MD5 hash of `user_email + bot_id` to create consistent delays
-- Same user-bot pairs always get same delay timing
-- Different pairs get spread across time windows to avoid simultaneous messages
+- `SUPABASE_URL` — Supabase project URL
+- `SUPABASE_KEY` — Supabase service role or anon key
+- `GEMINI_API_KEY` — LLM/API key used by `news_weather_agent` (GoogleGenAI)
+- `GOOGLE_SEARCH_API_KEY` / `GOOGLE_CSE_ID` — optional (used by Google search helper in `news_weather_agent.py`)
 
-### Spam Prevention:
-- Tracks last message timestamps in database
-- Enforces minimum intervals between proactive messages of same type
-- Uses message content markers (`[WEATHER_USER]`, `[NEWS_BOT]`, etc.) for tracking
+Ensure these are placed in the repository `.env` file or set in the environment prior to running the app.
 
-## New API Endpoints
+## How scheduling behaves at runtime
 
-### Manual Testing Endpoints:
-- `POST /run_staggered_proactive_alerts` - Trigger all staggered alerts
-- `POST /run_weather_alerts_user` - Test weather alerts for user locations
-- `POST /run_weather_alerts_bot` - Test weather alerts for bot locations  
-- `POST /run_news_alerts_bot` - Test news alerts for bot locations
+- On FastAPI startup the `scheduled_weekly_news_summary` task is registered via `app.add_event_handler('startup', scheduled_weekly_news_summary)` and will run once per week while the process runs.
+- `start_scheduler()` is also registered on startup and starts the APScheduler jobs for proactive alerts at fixed hours (08:00, 14:00, 19:00). These jobs iterate through today's user-bot pairs and call the corresponding check/alert functions.
 
-### Existing Endpoints (Enhanced):
-- `POST /run_weekly_summary` - Weekly news summaries
-- `POST /run_major_event_alert` - Major event alerts (user location)
+## Database / table expectations
 
-## Database Integration
-
-### Message Tracking:
-- Uses existing `message_paritition` table
-- Adds message type markers for tracking different alert types
-- Implements time-based filtering to prevent duplicate messages
-
-### User-Bot Pair Detection:
-- Automatically detects user-bot pairs from conversations that happened today only
-- Fetches user and bot details from `user_details` and `bot_personality_details` tables
-
-## Key Benefits
-
-1. **No Message Flooding**: Staggered delays prevent all users receiving alerts simultaneously
-2. **Smart Timing**: Different alert types spread across different time windows
-3. **Spam Protection**: Minimum intervals prevent excessive messaging
-4. **Scalable**: Works for any number of user-bot pairs
-5. **Testable**: Manual endpoints for testing individual alert types
-6. **Backward Compatible**: Existing functionality remains unchanged
-
-## Configuration
-
-### Alert Thresholds:
-- Weather: Storms, extreme temperatures, weather warnings
-- News: Political events, economic crises, disasters, major incidents
-
-### Timing Configuration:
-- Base intervals can be adjusted in the scheduling functions
-- Stagger windows can be modified in `get_staggered_delay()`
-- Minimum intervals configurable in `should_send_proactive_message()`
-
-## Usage
-
-The system automatically starts when the FastAPI application launches. All scheduled tasks are registered as startup event handlers and will run according to their configured intervals.
-
-For manual testing or debugging, use the provided API endpoints to trigger specific alert types on demand.
-
-## Testing
-
-Run the test script to verify the system is working:
-
-```bash
-python test_proactive_alerts.py
-```
-
-This will test:
-1. Today's user-bot pair detection
-2. Parameter retrieval
-3. Staggered delay calculation
-4. Spam prevention logic
-5. Full proactive message system
-
-## Recent Fixes
-
-### Fixed Issues:
-1. **Async Function**: Made `scheduled_staggered_proactive_alerts()` async to properly handle async operations
-2. **Message Pattern Matching**: Fixed message type patterns in `should_send_proactive_message()` to match actual message prefixes
-3. **User Detection**: Uses today's user-bot pairs only for proactive messaging
-4. **Error Handling**: Improved error handling and logging throughout the system
-
-### System Status:
-✅ **Ready for Production**: All proactive messages should now work correctly with proper staggered timing and spam prevention.
+- `message_paritition` (note the existing table name in code)
+	- Expected columns: `email`, `bot_id`, `user_message`, `bot_response`, `created_at` (used for date filtering)
+- `user_details` — at least `email`, `name`, `gender`, `city` fields expected by the helper utilities
+- `bot_personality_details` — expected fields: `bot_id`, `bot_name`, `bot_city`
