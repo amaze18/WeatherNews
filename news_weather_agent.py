@@ -11,8 +11,10 @@ from dotenv import load_dotenv
 from llama_index.llms.google_genai import GoogleGenAI
 import asyncio
 
-# Load environment variables from .env file
-dotenv_path = Path('.env')
+# --- Robust Environment Variable Loading ---
+# Get the absolute path to the directory containing the script
+project_dir = Path(__file__).parent.absolute()
+dotenv_path = project_dir / ".env"
 load_dotenv(dotenv_path=dotenv_path)
 
 # --- Google Search Functionality ---
@@ -122,7 +124,8 @@ class OpenWeatherMapTool(BaseTool):
                 pressure = main_data["pressure"]
                 humidity = main_data["humidity"]
                 description = weather_data["description"]
-                return f"City: {city_name}, Temperature: {temperature}°C, Pressure: {pressure} hPa, Humidity: {humidity}%, Weather: {description}"
+                # Use a consistent, lowercase format for the output
+                return f"city: {city_name}, temperature: {temperature}°C, pressure: {pressure} hPa, humidity: {humidity}%, weather: {description}"
 
         except requests.exceptions.RequestException as e:
             return f"Error fetching weather data: {e}"
@@ -383,7 +386,9 @@ def get_temperature_response(weather_summary, persona_prompt, user_name, languag
     """
     Generate a persona-based response that includes the temperature.
     """
-    match = re.search(r"Temperature: ([\d\.-]+)°C", weather_summary)
+    # Use a more robust regex to handle variations
+    match = re.search(r"temperature:\s*([\d\.-]+)°C", weather_summary, re.IGNORECASE)
+    
     if not match:
         return f"I'm sorry, I couldn't find the temperature for {location}."
 
@@ -408,6 +413,7 @@ Format: Only say how you feel about the temperature, in {language}, as if talkin
     except Exception:
         # Fallback if LLM call fails
         return f"Ugh, my phone died. It's {temperature}°C in {location} though, I guess."
+
 async def persona_response(user_message, persona_prompt, language, user_name, user_location=None):
     """
     Generate a persona-based response to a user message.
