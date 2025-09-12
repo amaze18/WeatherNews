@@ -379,7 +379,35 @@ Respond with only one word: 'news', 'weather', or 'other'.
     return result
 
 # --- Main Functionality ---
+def get_temperature_response(weather_summary, persona_prompt, user_name, language, location):
+    """
+    Generate a persona-based response that includes the temperature.
+    """
+    match = re.search(r"Temperature: ([\d\.-]+)°C", weather_summary)
+    if not match:
+        return f"I'm sorry, I couldn't find the temperature for {location}."
 
+    temperature = match.group(1)
+    
+    # Use the LLM to formulate the response with the persona
+    llm_prompt = f"""
+Based on the personality given, Respond in {language}, 1 or 2 sentence, describing the temperature in {location}, using your personality traits below.
+You must include the temperature of {temperature}°C in your response.
+
+Personality: {persona_prompt}
+
+Format: Only say how you feel about the temperature, in {language}, as if talking to a friend named {user_name}. Include the temperature in the response and make it sound natural to your persona.
+"""
+    api_key = os.environ.get("GEMINI_API_KEY")
+    model = "gemini-1.5-flash"
+    llm = GoogleGenAI(model=model, api_key=api_key)
+    
+    try:
+        response = llm.complete(llm_prompt)
+        return response.text.strip()
+    except Exception:
+        # Fallback if LLM call fails
+        return f"Ugh, my phone died. It's {temperature}°C in {location} though, I guess."
 async def persona_response(user_message, persona_prompt, language, user_name, user_location=None):
     """
     Generate a persona-based response to a user message.
@@ -394,8 +422,8 @@ async def persona_response(user_message, persona_prompt, language, user_name, us
     location = resolve_location(user_location, llm)
     category = await call_gemma_classify(user_message)
     print(f"[DEBUG] category from call_gemma_classify: {category}")
+
     if category == "news":
-        # News flow using the CrewAI agent with the Google search tool
         if context == "user":
             result = crew.kickoff(inputs={'topic': f'What is the latest National news in {location}? Any present major incidents or events?'})
         else:
@@ -403,22 +431,23 @@ async def persona_response(user_message, persona_prompt, language, user_name, us
         result = str(result)
         response = get_news_response(result, persona_prompt, user_name, language, bot_location, user_location, context)
     elif category == "weather":
-        # Weather flow using the new OpenWeatherMap API tool
-        if context == "user":
-            # Call the tool directly and get the result
-            result = open_weather_map_tool._run(city_name=user_location)
-        else:
-            # Call the tool directly and get the result
-            result = open_weather_map_tool._run(city_name=bot_location)
+        # Determine the location for the weather query
+        weather_location = user_location if context == "user" else bot_location
+
+        # Call the weather tool to get the raw data
+        result = open_weather_map_tool._run(city_name=weather_location)
         result = str(result)
-        response = get_weather_response(result, persona_prompt, user_name, language, bot_location, user_location, context)
+        
+        # Check for specific temperature keywords and use the new function
+        if re.search(r'\btemperature\b|\bhow hot\b|\bhow cold\b|\bwhat is the temp\b', user_message, re.IGNORECASE):
+            response = get_temperature_response(result, persona_prompt, user_name, language, weather_location)
+        else:
+            # Fallback to the persona-based general weather response
+            response = get_weather_response(result, persona_prompt, user_name, language, bot_location, user_location, context)
     else:
         response = "umm, sorry my phone died, what were you asking?!"
     print(f"[DEBUG] Final response: {response}")
     return response
-
-# --- Monitoring and Alerting Functions ---
-
 # Function to check if the weather summary contains interesting weather conditions
 def is_interesting_weather(weather_text):
     """
