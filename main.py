@@ -41,7 +41,22 @@ app.add_middleware(
 # --- Supabase connection details ---
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+print(f"[SUPABASE] 🔧 Initializing Supabase client...")
+print(f"[SUPABASE] 🔧 SUPABASE_URL: {SUPABASE_URL[:20] + '...' if SUPABASE_URL else 'None'}")
+print(f"[SUPABASE] 🔧 SUPABASE_KEY: {'Present' if SUPABASE_KEY else 'Missing'}")
+
+if not SUPABASE_URL or not SUPABASE_KEY:
+    print(f"[SUPABASE] ❌ ERROR: Missing Supabase credentials!")
+    print(f"[SUPABASE] ❌ SUPABASE_URL: {SUPABASE_URL}")
+    print(f"[SUPABASE] ❌ SUPABASE_KEY: {'Present' if SUPABASE_KEY else 'Missing'}")
+    supabase = None
+else:
+    try:
+        supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+        print(f"[SUPABASE] ✅ Supabase client initialized successfully")
+    except Exception as e:
+        print(f"[SUPABASE] ❌ ERROR: Failed to initialize Supabase client: {e}")
+        supabase = None
 
 # --- Pydantic request model ---
 class QuestionRequest(BaseModel):
@@ -61,6 +76,10 @@ class QuestionRequest(BaseModel):
 # --- Helper functions ---
 def get_today_user_bot_pairs():
     try:
+        if supabase is None:
+            print(f"[SUPABASE] ❌ ERROR: Supabase client is not initialized in get_today_user_bot_pairs!")
+            return []
+            
         utc_now = datetime.now(timezone.utc)
         start = datetime.combine(utc_now.date(), time.min, tzinfo=timezone.utc).isoformat()
         end = datetime.combine(utc_now.date(), time.max, tzinfo=timezone.utc).isoformat()
@@ -79,6 +98,10 @@ def get_all_news_agent_params():
     pairs = get_today_user_bot_pairs()
     params_list = []
     for email, bot_id in pairs:
+        if supabase is None:
+            print(f"[SUPABASE] ❌ ERROR: Supabase client is not initialized in get_all_news_agent_params!")
+            continue
+            
         user_details = supabase.table("user_details").select("*").eq("email", email).single().execute().data or {}
         bot_details = supabase.table("bot_personality_details").select("*").eq("bot_id", bot_id).single().execute().data or {}
         user_name = user_details.get("name", email.split("@")[0])
@@ -128,6 +151,12 @@ def log_activity_message_to_supabase(email, bot_id, user_message, bot_response, 
     Enhanced function to log activity messages to Supabase with platform and activity tracking.
     Based on the reference implementation from gaming agents project.
     """
+    print(f"[SUPABASE] 🚀 log_activity_message_to_supabase called with:")
+    print(f"[SUPABASE] 🚀 email: {email}")
+    print(f"[SUPABASE] 🚀 bot_id: {bot_id}")
+    print(f"[SUPABASE] 🚀 platform: {platform}")
+    print(f"[SUPABASE] 🚀 activity_name: {activity_name}")
+    
     now = datetime.utcnow().isoformat()
     
     # Ensure bot_response is a string and handle Unicode properly
@@ -163,6 +192,10 @@ def log_activity_message_to_supabase(email, bot_id, user_message, bot_response, 
     print(f"[SUPABASE] Bot response: {bot_response[:100]}{'...' if len(bot_response) > 100 else ''}")
     
     try:
+        if supabase is None:
+            print(f"[SUPABASE] ❌ ERROR: Supabase client is not initialized!")
+            return False
+            
         response = supabase.table("message_paritition").insert(data).execute()
         
         if response.data and len(response.data) > 0:
@@ -268,12 +301,15 @@ async def handle_news_weather_agent(request: QuestionRequest):
     print(f"[CHAT] Processing chat request from {request.email or 'NO EMAIL'}")
     print(f"[CHAT] Bot ID: {request.bot_id}")
     print(f"[CHAT] User message: {request.message or 'NO MESSAGE'}")
+    print(f"[CHAT] DEBUG: request.email type: {type(request.email)}, value: '{request.email}'")
+    print(f"[CHAT] DEBUG: request.email.strip() if exists: '{request.email.strip() if request.email else 'None'}'")
     
     if request.email and request.email.strip():
         print(f"[CHAT] ✅ Email provided: {request.email} - will save to Supabase")
         try:
             # Determine activity type based on user message
             activity_name = determine_activity_type(request.message)
+            print(f"[CHAT] DEBUG: Determined activity_name: {activity_name}")
             
             storage_success = log_activity_message_to_supabase(
                 email=request.email,
@@ -290,10 +326,13 @@ async def handle_news_weather_agent(request: QuestionRequest):
                 print(f"[CHAT] ❌ Failed to save conversation to Supabase for {request.email}")
         except Exception as e:
             print(f"[CHAT] ❌ Exception while saving conversation: {e}")
+            import traceback
+            print(f"[CHAT] ❌ Full traceback: {traceback.format_exc()}")
             logging.error(f"Failed to save conversation for {request.email}: {e}")
     else:
         print("[CHAT] ⚠️  WARNING: No email provided, conversation NOT saved to database")
         print("[CHAT] ⚠️  To save conversations, include 'email' field in your request")
+        print(f"[CHAT] DEBUG: Email check failed - email: '{request.email}', stripped: '{request.email.strip() if request.email else 'None'}'")
     
     return {
         "response": response,
@@ -309,6 +348,12 @@ async def news_weather_agent(request: QuestionRequest):
 @app.post("/weather/news_weather_agent")
 async def news_weather_agent_alias(request: QuestionRequest):
     return await handle_news_weather_agent(request)
+
+# --- Gaming Agents Compatible Endpoint ---
+@app.post("/weather_news_agent")
+async def weather_news_agent_compatible(request: QuestionRequest):
+    """Gaming agents compatible endpoint that stores to Supabase"""
+    return await simple_chat(request)
 
 # --- Scheduled tasks ---
 @repeat_every(seconds=60*60*24*7)
@@ -481,6 +526,81 @@ async def run_news_alerts_bot():
             )
             count += 1
     return {"status": f"News alerts for bots triggered - {count} alerts sent"}
+
+# --- Supabase Connection Test Endpoint ---
+@app.get("/test_supabase_connection")
+async def test_supabase_connection():
+    """Test Supabase connection and return status"""
+    print(f"[TEST] Testing Supabase connection...")
+    
+    if supabase is None:
+        return {
+            "status": "error",
+            "message": "Supabase client is not initialized",
+            "supabase_url": SUPABASE_URL,
+            "supabase_key": "Present" if SUPABASE_KEY else "Missing"
+        }
+    
+    try:
+        # Test connection by trying to read from the table
+        response = supabase.table("message_paritition").select("id").limit(1).execute()
+        return {
+            "status": "success",
+            "message": "Supabase connection successful",
+            "data_count": len(response.data) if response.data else 0
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Supabase connection failed: {str(e)}"
+        }
+
+# --- Simplified Chat Endpoint (works without AI dependencies) ---
+@app.post("/simple_chat")
+async def simple_chat(request: QuestionRequest):
+    """Simplified chat endpoint that stores to Supabase without AI dependencies"""
+    
+    print(f"[SIMPLE_CHAT] Processing request from {request.email or 'NO EMAIL'}")
+    print(f"[SIMPLE_CHAT] Message: {request.message}")
+    print(f"[SIMPLE_CHAT] Bot ID: {request.bot_id}")
+    
+    # Create a simple response
+    bot_response = f"Hello {request.user_name}! I received your message: '{request.message}'. This is a simplified response from the weather news agent."
+    
+    # Store to Supabase if email is provided
+    if request.email and request.email.strip():
+        print(f"[SIMPLE_CHAT] ✅ Email provided: {request.email} - will save to Supabase")
+        try:
+            # Determine activity type based on user message
+            activity_name = determine_activity_type(request.message)
+            print(f"[SIMPLE_CHAT] DEBUG: Determined activity_name: {activity_name}")
+            
+            storage_success = log_activity_message_to_supabase(
+                email=request.email,
+                bot_id=request.bot_id,
+                user_message=request.message or "",
+                bot_response=bot_response,
+                platform="weather_news",
+                activity_name=activity_name
+            )
+            if storage_success:
+                print(f"[SIMPLE_CHAT] ✅ Conversation successfully saved to Supabase for {request.email}")
+                print(f"[SIMPLE_CHAT] ✅ Activity type: {activity_name}")
+            else:
+                print(f"[SIMPLE_CHAT] ❌ Failed to save conversation to Supabase for {request.email}")
+        except Exception as e:
+            print(f"[SIMPLE_CHAT] ❌ Exception while saving conversation: {e}")
+            import traceback
+            print(f"[SIMPLE_CHAT] ❌ Full traceback: {traceback.format_exc()}")
+    else:
+        print("[SIMPLE_CHAT] ⚠️  WARNING: No email provided, conversation NOT saved to database")
+    
+    return {
+        "response": bot_response,
+        "user_name": request.user_name,
+        "language": request.language,
+        "stored_to_supabase": bool(request.email and request.email.strip())
+    }
 
 # --- Simple Storage Test Endpoint (bypasses AI) ---
 @app.post("/test_storage")
