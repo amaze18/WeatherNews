@@ -157,6 +157,17 @@ def log_activity_message_to_supabase(email, bot_id, user_message, bot_response, 
     print(f"[SUPABASE] 🚀 platform: {platform}")
     print(f"[SUPABASE] 🚀 activity_name: {activity_name}")
     
+    # Validate required parameters
+    if not email or not email.strip():
+        print(f"[SUPABASE] ❌ ERROR: Email is required for message logging")
+        logging.error("Email is required for message logging")
+        return False
+    
+    if not bot_id or not bot_id.strip():
+        print(f"[SUPABASE] ❌ ERROR: Bot ID is required for message logging")
+        logging.error("Bot ID is required for message logging")
+        return False
+    
     now = datetime.utcnow().isoformat()
     
     # Ensure bot_response is a string and handle Unicode properly
@@ -170,12 +181,21 @@ def log_activity_message_to_supabase(email, bot_id, user_message, bot_response, 
     # Handle potential Unicode issues by encoding/decoding
     try:
         bot_response = bot_response.encode('utf-8', errors='ignore').decode('utf-8')
+        user_message = str(user_message or "").encode('utf-8', errors='ignore').decode('utf-8')
     except (UnicodeEncodeError, UnicodeDecodeError):
         bot_response = str(bot_response)
+        user_message = str(user_message or "")
+    
+    # Truncate messages if they're too long (to prevent database issues)
+    max_message_length = 10000  # Adjust based on your database column limits
+    if len(user_message) > max_message_length:
+        user_message = user_message[:max_message_length] + "... [truncated]"
+    if len(bot_response) > max_message_length:
+        bot_response = bot_response[:max_message_length] + "... [truncated]"
     
     data = {
-        "email": email,
-        "bot_id": bot_id,
+        "email": email.strip(),
+        "bot_id": bot_id.strip(),
         "user_message": user_message,
         "bot_response": bot_response,
         "requested_time": now,
@@ -194,6 +214,7 @@ def log_activity_message_to_supabase(email, bot_id, user_message, bot_response, 
     try:
         if supabase is None:
             print(f"[SUPABASE] ❌ ERROR: Supabase client is not initialized!")
+            logging.error("Supabase client is not initialized")
             return False
             
         response = supabase.table("message_paritition").insert(data).execute()
@@ -218,7 +239,17 @@ def log_activity_message_to_supabase(email, bot_id, user_message, bot_response, 
         print(f"[SUPABASE] ❌ Email: {email}")
         print(f"[SUPABASE] ❌ Bot ID: {bot_id}")
         print(f"[SUPABASE] ❌ Platform: {platform}")
+        print(f"[SUPABASE] ❌ Error details: {str(e)}")
         logging.error(f"Failed to insert message for {email}: {e}")
+        
+        # Try to provide more specific error information
+        if "duplicate key" in str(e).lower():
+            print(f"[SUPABASE] ⚠️  WARNING: Possible duplicate message detected")
+        elif "connection" in str(e).lower():
+            print(f"[SUPABASE] ⚠️  WARNING: Connection issue with Supabase")
+        elif "permission" in str(e).lower() or "unauthorized" in str(e).lower():
+            print(f"[SUPABASE] ⚠️  WARNING: Permission issue with Supabase")
+        
         return False
 
 def determine_activity_type(user_message):
@@ -276,6 +307,64 @@ def insert_user_message(email, bot_id, user_message, bot_response):
         activity_name=activity_name
     )
 
+# --- Universal Message Logging Wrapper ---
+async def log_and_process_chat(request: QuestionRequest, response_func, endpoint_name="unknown"):
+    """
+    Universal wrapper to ensure all chat interactions are logged to Supabase.
+    This function wraps any chat processing function to guarantee message logging.
+    """
+    print(f"[CHAT_LOGGER] 🚀 Processing {endpoint_name} request from {request.email or 'NO EMAIL'}")
+    print(f"[CHAT_LOGGER] 📨 Message: {request.message or 'NO MESSAGE'}")
+    print(f"[CHAT_LOGGER] 🤖 Bot ID: {request.bot_id}")
+    print(f"[CHAT_LOGGER] 👤 User: {request.user_name}")
+    
+    # Process the request using the provided function
+    try:
+        result = await response_func(request)
+        bot_response = result.get("response", "") if isinstance(result, dict) else str(result)
+    except Exception as e:
+        print(f"[CHAT_LOGGER] ❌ Error processing request: {e}")
+        bot_response = f"Sorry, I encountered an error: {str(e)}"
+        result = {"response": bot_response, "error": str(e)}
+    
+    # Always attempt to log the conversation if email is provided
+    if request.email and request.email.strip():
+        print(f"[CHAT_LOGGER] ✅ Email provided: {request.email} - will save to Supabase")
+        try:
+            # Determine activity type based on user message
+            activity_name = determine_activity_type(request.message)
+            print(f"[CHAT_LOGGER] DEBUG: Determined activity_name: {activity_name}")
+            
+            storage_success = log_activity_message_to_supabase(
+                email=request.email,
+                bot_id=request.bot_id,
+                user_message=request.message or "",
+                bot_response=bot_response,
+                platform="weather_news",
+                activity_name=activity_name
+            )
+            if storage_success:
+                print(f"[CHAT_LOGGER] ✅ Conversation successfully saved to Supabase for {request.email}")
+                print(f"[CHAT_LOGGER] ✅ Activity type: {activity_name}")
+                print(f"[CHAT_LOGGER] ✅ Endpoint: {endpoint_name}")
+            else:
+                print(f"[CHAT_LOGGER] ❌ Failed to save conversation to Supabase for {request.email}")
+        except Exception as e:
+            print(f"[CHAT_LOGGER] ❌ Exception while saving conversation: {e}")
+            import traceback
+            print(f"[CHAT_LOGGER] ❌ Full traceback: {traceback.format_exc()}")
+            logging.error(f"Failed to save conversation for {request.email}: {e}")
+    else:
+        print(f"[CHAT_LOGGER] ⚠️  WARNING: No email provided, conversation NOT saved to database")
+        print(f"[CHAT_LOGGER] ⚠️  To save conversations, include 'email' field in your request")
+    
+    # Add logging status to result
+    if isinstance(result, dict):
+        result["logged_to_supabase"] = bool(request.email and request.email.strip())
+        result["endpoint"] = endpoint_name
+    
+    return result
+
 # --- Core logic for both endpoints ---
 async def handle_news_weather_agent(request: QuestionRequest):
     raw_bot_prompt = get_bot_prompt(request.bot_id)
@@ -297,43 +386,6 @@ async def handle_news_weather_agent(request: QuestionRequest):
     end = pytime.time()
     print(f"[DEBUG] Time taken for persona_response: {end - start} seconds")
     
-    # Save the conversation to the database if email is provided
-    print(f"[CHAT] Processing chat request from {request.email or 'NO EMAIL'}")
-    print(f"[CHAT] Bot ID: {request.bot_id}")
-    print(f"[CHAT] User message: {request.message or 'NO MESSAGE'}")
-    print(f"[CHAT] DEBUG: request.email type: {type(request.email)}, value: '{request.email}'")
-    print(f"[CHAT] DEBUG: request.email.strip() if exists: '{request.email.strip() if request.email else 'None'}'")
-    
-    if request.email and request.email.strip():
-        print(f"[CHAT] ✅ Email provided: {request.email} - will save to Supabase")
-        try:
-            # Determine activity type based on user message
-            activity_name = determine_activity_type(request.message)
-            print(f"[CHAT] DEBUG: Determined activity_name: {activity_name}")
-            
-            storage_success = log_activity_message_to_supabase(
-                email=request.email,
-                bot_id=request.bot_id,
-                user_message=request.message or "",
-                bot_response=response,
-                platform="weather_news",
-                activity_name=activity_name
-            )
-            if storage_success:
-                print(f"[CHAT] ✅ Conversation successfully saved to Supabase for {request.email}")
-                print(f"[CHAT] ✅ Activity type: {activity_name}")
-            else:
-                print(f"[CHAT] ❌ Failed to save conversation to Supabase for {request.email}")
-        except Exception as e:
-            print(f"[CHAT] ❌ Exception while saving conversation: {e}")
-            import traceback
-            print(f"[CHAT] ❌ Full traceback: {traceback.format_exc()}")
-            logging.error(f"Failed to save conversation for {request.email}: {e}")
-    else:
-        print("[CHAT] ⚠️  WARNING: No email provided, conversation NOT saved to database")
-        print("[CHAT] ⚠️  To save conversations, include 'email' field in your request")
-        print(f"[CHAT] DEBUG: Email check failed - email: '{request.email}', stripped: '{request.email.strip() if request.email else 'None'}'")
-    
     return {
         "response": response,
         "user_name": request.user_name,
@@ -343,17 +395,17 @@ async def handle_news_weather_agent(request: QuestionRequest):
 # --- Endpoints ---
 @app.post("/news_weather_agent")
 async def news_weather_agent(request: QuestionRequest):
-    return await handle_news_weather_agent(request)
+    return await log_and_process_chat(request, handle_news_weather_agent, "news_weather_agent")
 
 @app.post("/weather/news_weather_agent")
 async def news_weather_agent_alias(request: QuestionRequest):
-    return await handle_news_weather_agent(request)
+    return await log_and_process_chat(request, handle_news_weather_agent, "news_weather_agent_alias")
 
 # --- Gaming Agents Compatible Endpoint ---
 @app.post("/weather_news_agent")
 async def weather_news_agent_compatible(request: QuestionRequest):
     """Gaming agents compatible endpoint that stores to Supabase"""
-    return await simple_chat(request)
+    return await log_and_process_chat(request, simple_chat, "weather_news_agent_compatible")
 
 # --- Scheduled tasks ---
 @repeat_every(seconds=60*60*24*7)
@@ -556,7 +608,6 @@ async def test_supabase_connection():
         }
 
 # --- Simplified Chat Endpoint (works without AI dependencies) ---
-@app.post("/simple_chat")
 async def simple_chat(request: QuestionRequest):
     """Simplified chat endpoint that stores to Supabase without AI dependencies"""
     
@@ -567,46 +618,20 @@ async def simple_chat(request: QuestionRequest):
     # Create a simple response
     bot_response = f"Hello {request.user_name}! I received your message: '{request.message}'. This is a simplified response from the weather news agent."
     
-    # Store to Supabase if email is provided
-    if request.email and request.email.strip():
-        print(f"[SIMPLE_CHAT] ✅ Email provided: {request.email} - will save to Supabase")
-        try:
-            # Determine activity type based on user message
-            activity_name = determine_activity_type(request.message)
-            print(f"[SIMPLE_CHAT] DEBUG: Determined activity_name: {activity_name}")
-            
-            storage_success = log_activity_message_to_supabase(
-                email=request.email,
-                bot_id=request.bot_id,
-                user_message=request.message or "",
-                bot_response=bot_response,
-                platform="weather_news",
-                activity_name=activity_name
-            )
-            if storage_success:
-                print(f"[SIMPLE_CHAT] ✅ Conversation successfully saved to Supabase for {request.email}")
-                print(f"[SIMPLE_CHAT] ✅ Activity type: {activity_name}")
-            else:
-                print(f"[SIMPLE_CHAT] ❌ Failed to save conversation to Supabase for {request.email}")
-        except Exception as e:
-            print(f"[SIMPLE_CHAT] ❌ Exception while saving conversation: {e}")
-            import traceback
-            print(f"[SIMPLE_CHAT] ❌ Full traceback: {traceback.format_exc()}")
-    else:
-        print("[SIMPLE_CHAT] ⚠️  WARNING: No email provided, conversation NOT saved to database")
-    
     return {
         "response": bot_response,
         "user_name": request.user_name,
-        "language": request.language,
-        "stored_to_supabase": bool(request.email and request.email.strip())
+        "language": request.language
     }
 
+@app.post("/simple_chat")
+async def simple_chat_endpoint(request: QuestionRequest):
+    """Public endpoint for simple chat with automatic logging"""
+    return await log_and_process_chat(request, simple_chat, "simple_chat")
+
 # --- Simple Storage Test Endpoint (bypasses AI) ---
-@app.post("/test_storage")
-async def test_storage(request: QuestionRequest):
-    """Simple endpoint that just stores the message and returns a response - bypasses AI"""
-    
+async def test_storage_logic(request: QuestionRequest):
+    """Logic for storage test endpoint"""
     print(f"[API] 🚀 Received storage test request from {request.email or 'NO EMAIL'}")
     print(f"[API] 📨 Message: {request.message}")
     print(f"[API] 🤖 Bot ID: {request.bot_id}")
@@ -616,33 +641,49 @@ async def test_storage(request: QuestionRequest):
     bot_response = f"Hello {request.user_name}! I received your message: '{request.message}'. This is a storage test response."
     print(f"[API] 💬 Generated bot response: {bot_response}")
     
-    # Save to Supabase
-    print(f"[API] 💾 Attempting to save to Supabase...")
-    success = log_activity_message_to_supabase(
-        email=request.email,
-        bot_id=request.bot_id,
-        user_message=request.message or "",
-        bot_response=bot_response,
-        platform="weather_news",
-        activity_name="storage_test"
-    )
+    return {
+        "status": "success",
+        "message": "Message processed successfully",
+        "response": bot_response,
+        "test_data": {
+            "email": request.email,
+            "bot_id": request.bot_id,
+            "user_message": request.message,
+            "bot_response": bot_response
+        }
+    }
+
+@app.post("/test_storage")
+async def test_storage(request: QuestionRequest):
+    """Simple endpoint that just stores the message and returns a response - bypasses AI"""
+    return await log_and_process_chat(request, test_storage_logic, "test_storage")
+
+# --- Message Logging Test Endpoint ---
+@app.post("/test_message_logging")
+async def test_message_logging(request: QuestionRequest):
+    """Test endpoint specifically for verifying message logging functionality"""
+    print(f"[MESSAGE_LOGGING_TEST] 🧪 Testing message logging for {request.email or 'NO EMAIL'}")
     
-    if success:
-        print(f"[API] ✅ Request completed successfully - message stored in Supabase")
+    # Create a test response
+    test_response = f"Message logging test successful! Your message '{request.message}' was received and will be logged to Supabase."
+    
+    # Use the logging wrapper
+    async def test_logic(req):
         return {
-            "status": "success",
-            "message": "Message stored successfully in Supabase",
-            "response": bot_response,
-            "stored_data": {
-                "email": request.email,
-                "bot_id": request.bot_id,
-                "user_message": request.message,
-                "bot_response": bot_response
-            }
+            "response": test_response,
+            "user_name": req.user_name,
+            "language": req.language,
+            "test_type": "message_logging_verification"
         }
-    else:
-        print(f"[API] ❌ Request failed - message NOT stored in Supabase")
-        return {
-            "status": "error",
-            "message": "Failed to store message in Supabase"
-        }
+    
+    result = await log_and_process_chat(request, test_logic, "test_message_logging")
+    
+    # Add additional test information
+    result["logging_test"] = {
+        "email_provided": bool(request.email and request.email.strip()),
+        "message_length": len(request.message or ""),
+        "bot_id": request.bot_id,
+        "timestamp": datetime.utcnow().isoformat()
+    }
+    
+    return result
