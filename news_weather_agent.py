@@ -137,7 +137,7 @@ open_weather_map_tool = OpenWeatherMapTool()
 # --- Define Agents ---
 
 # Define the news researcher agent
-llm = 'gemini/gemini-1.5-flash'
+llm = 'gemini/gemini-2.0-flash'
 
 news_researcher = Agent(
     role='Situational Expert',
