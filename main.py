@@ -118,6 +118,20 @@ def insert_bot_message(email, bot_id, message):
         "bot_response": message,
     }).execute()
 
+def insert_user_message(email, bot_id, user_message, bot_response):
+    """Insert both user message and bot response into the database"""
+    try:
+        supabase.table("message_paritition").insert({
+            "email": email,
+            "bot_id": bot_id,
+            "user_message": user_message,
+            "bot_response": bot_response,
+        }).execute()
+        print(f"[DEBUG] Successfully inserted message for {email} with bot {bot_id}")
+    except Exception as e:
+        print(f"[ERROR] Failed to insert message: {e}")
+        logging.error(f"Failed to insert message for {email}: {e}")
+
 # --- Core logic for both endpoints ---
 async def handle_news_weather_agent(request: QuestionRequest):
     raw_bot_prompt = get_bot_prompt(request.bot_id)
@@ -138,6 +152,22 @@ async def handle_news_weather_agent(request: QuestionRequest):
     )
     end = pytime.time()
     print(f"[DEBUG] Time taken for persona_response: {end - start} seconds")
+    
+    # Save the conversation to the database if email is provided
+    if request.email and request.email.strip():
+        try:
+            insert_user_message(
+                email=request.email,
+                bot_id=request.bot_id,
+                user_message=request.message or "",
+                bot_response=response
+            )
+        except Exception as e:
+            print(f"[ERROR] Failed to save conversation: {e}")
+            logging.error(f"Failed to save conversation for {request.email}: {e}")
+    else:
+        print("[WARNING] No email provided, conversation not saved to database")
+    
     return {
         "response": response,
         "user_name": request.user_name,
