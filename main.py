@@ -376,3 +376,46 @@ async def run_news_alerts_bot():
             )
             count += 1
     return {"status": f"News alerts for bots triggered - {count} alerts sent"}
+
+# --- Simple Storage Test Endpoint (bypasses AI) ---
+@app.post("/test_storage")
+async def test_storage(request: QuestionRequest):
+    """Simple endpoint that just stores the message and returns a response - bypasses AI"""
+    
+    print(f"[API] 🚀 Received storage test request from {request.email or 'NO EMAIL'}")
+    print(f"[API] 📨 Message: {request.message}")
+    print(f"[API] 🤖 Bot ID: {request.bot_id}")
+    print(f"[API] 👤 User: {request.user_name}")
+    
+    # Create a simple bot response
+    bot_response = f"Hello {request.user_name}! I received your message: '{request.message}'. This is a storage test response."
+    print(f"[API] 💬 Generated bot response: {bot_response}")
+    
+    # Save to Supabase
+    print(f"[API] 💾 Attempting to save to Supabase...")
+    success = insert_user_message(
+        email=request.email,
+        bot_id=request.bot_id,
+        user_message=request.message or "",
+        bot_response=bot_response
+    )
+    
+    if success:
+        print(f"[API] ✅ Request completed successfully - message stored in Supabase")
+        return {
+            "status": "success",
+            "message": "Message stored successfully in Supabase",
+            "response": bot_response,
+            "stored_data": {
+                "email": request.email,
+                "bot_id": request.bot_id,
+                "user_message": request.message,
+                "bot_response": bot_response
+            }
+        }
+    else:
+        print(f"[API] ❌ Request failed - message NOT stored in Supabase")
+        return {
+            "status": "error",
+            "message": "Failed to store message in Supabase"
+        }
