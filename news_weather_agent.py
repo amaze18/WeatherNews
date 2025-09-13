@@ -190,7 +190,7 @@ def resolve_location(user_location, llm):
     ).text.strip()
     return location
 
-def get_persona_feeling(persona_prompt, summary, user_name, language, context="bot", topic="weather"):
+def get_persona_feeling(persona_prompt, summary, user_name, language, bot_location, context="bot", topic="weather"):
     """
     Determine the feeling or emotional response of a persona to a given news or weather summary.
     ... (rest of the function remains the same)
@@ -226,6 +226,8 @@ Personality: {persona_prompt}
 Situation: {summary[:200]}
 
 Format: Only say how you feel, in {language}, as if talking to a friend named {user_name}. Do not mention temperature or repeat the weather description and then ask the user how he feels, in your Personality.
+
+Strictly give your comment on temperature/weather with respect to your own persona who is based in {bot_location}.
 """
         else:
             llm_prompt = f"""
@@ -236,10 +238,12 @@ Personality: {persona_prompt}
 Situation: {summary[:200]}
 
 Format: Only say how you feel, in {language}, as if talking to a friend named {user_name}. Do not mention temperature or repeat the weather description and then ask the user about the weather in his location in your Personality.
+
+Strictly give your comment on temperature/weather with respect to your own persona who is based in {bot_location}.
 """
     # Use GoogleGenAI instead of HTTP API
     api_key = os.environ.get("GEMINI_API_KEY")
-    model = "gemini-1.5-flash"
+    model = "gemini-2.0-flash"
     llm = GoogleGenAI(model=model, api_key=api_key)
     try:
         response = llm.complete(llm_prompt)
