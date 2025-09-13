@@ -120,17 +120,37 @@ def insert_bot_message(email, bot_id, message):
 
 def insert_user_message(email, bot_id, user_message, bot_response):
     """Insert both user message and bot response into the database"""
+    print(f"[SUPABASE] Attempting to store message for {email} with bot {bot_id}")
+    print(f"[SUPABASE] User message: {user_message[:100]}{'...' if len(user_message) > 100 else ''}")
+    print(f"[SUPABASE] Bot response: {bot_response[:100]}{'...' if len(bot_response) > 100 else ''}")
+    
     try:
-        supabase.table("message_paritition").insert({
+        response = supabase.table("message_paritition").insert({
             "email": email,
             "bot_id": bot_id,
             "user_message": user_message,
             "bot_response": bot_response,
         }).execute()
-        print(f"[DEBUG] Successfully inserted message for {email} with bot {bot_id}")
+        
+        if response.data and len(response.data) > 0:
+            record_id = response.data[0].get('id', 'N/A')
+            print(f"[SUPABASE] ✅ SUCCESS: Message stored with ID {record_id}")
+            print(f"[SUPABASE] ✅ Email: {email}")
+            print(f"[SUPABASE] ✅ Bot ID: {bot_id}")
+            print(f"[SUPABASE] ✅ Created at: {response.data[0].get('created_at', 'N/A')}")
+            logging.info(f"Successfully stored message for {email} with ID {record_id}")
+            return True
+        else:
+            print(f"[SUPABASE] ❌ ERROR: No data returned from insert operation")
+            logging.error(f"Insert operation returned no data for {email}")
+            return False
+            
     except Exception as e:
-        print(f"[ERROR] Failed to insert message: {e}")
+        print(f"[SUPABASE] ❌ ERROR: Failed to insert message: {e}")
+        print(f"[SUPABASE] ❌ Email: {email}")
+        print(f"[SUPABASE] ❌ Bot ID: {bot_id}")
         logging.error(f"Failed to insert message for {email}: {e}")
+        return False
 
 # --- Core logic for both endpoints ---
 async def handle_news_weather_agent(request: QuestionRequest):
@@ -154,19 +174,29 @@ async def handle_news_weather_agent(request: QuestionRequest):
     print(f"[DEBUG] Time taken for persona_response: {end - start} seconds")
     
     # Save the conversation to the database if email is provided
+    print(f"[CHAT] Processing chat request from {request.email or 'NO EMAIL'}")
+    print(f"[CHAT] Bot ID: {request.bot_id}")
+    print(f"[CHAT] User message: {request.message or 'NO MESSAGE'}")
+    
     if request.email and request.email.strip():
+        print(f"[CHAT] ✅ Email provided: {request.email} - will save to Supabase")
         try:
-            insert_user_message(
+            storage_success = insert_user_message(
                 email=request.email,
                 bot_id=request.bot_id,
                 user_message=request.message or "",
                 bot_response=response
             )
+            if storage_success:
+                print(f"[CHAT] ✅ Conversation successfully saved to Supabase for {request.email}")
+            else:
+                print(f"[CHAT] ❌ Failed to save conversation to Supabase for {request.email}")
         except Exception as e:
-            print(f"[ERROR] Failed to save conversation: {e}")
+            print(f"[CHAT] ❌ Exception while saving conversation: {e}")
             logging.error(f"Failed to save conversation for {request.email}: {e}")
     else:
-        print("[WARNING] No email provided, conversation not saved to database")
+        print("[CHAT] ⚠️  WARNING: No email provided, conversation NOT saved to database")
+        print("[CHAT] ⚠️  To save conversations, include 'email' field in your request")
     
     return {
         "response": response,
