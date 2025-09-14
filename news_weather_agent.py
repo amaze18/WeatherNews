@@ -405,7 +405,7 @@ You must include the temperature of {temperature}°C in your response.
 
 Personality: {persona_prompt}
 
-Format: Only say how you feel about the temperature, in {language}, as if talking to a friend named {user_name}. Include the temperature in the response and make it sound natural to your persona.
+Format: Only say how you feel about the temperature, in {language}, as if talking to a friend named {user_name}. Include the temperature in the response and make it sound natural to your persona.Only the temperature should be expressed in numbers, not words.
 """
     api_key = os.environ.get("GEMINI_API_KEY")
     model = "gemini-1.5-flash"
