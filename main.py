@@ -803,11 +803,6 @@ def send_proactive_general_updates():
 def start_scheduler():
     scheduler = BackgroundScheduler()
     
-    # Existing alert jobs (daily at specific times)
-    scheduler.add_job(send_weather_user_alerts, 'cron', hour=8)
-    scheduler.add_job(send_weather_bot_alerts, 'cron', hour=14)
-    scheduler.add_job(send_news_user_alerts, 'cron', hour=19)
-    
     # New proactive messaging jobs (every 3 days)
     # Weather updates at 10 AM every 3 days
     scheduler.add_job(send_proactive_weather_updates, 'cron', hour=10, day='*/3')
