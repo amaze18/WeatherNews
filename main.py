@@ -133,6 +133,130 @@ def get_all_news_agent_params():
         })
     return params_list
 
+def get_all_active_users():
+    """
+    Get all users who have ever interacted with any bot, not just today's users.
+    This is used for proactive messaging to reach all users, not just those who chatted today.
+    """
+    try:
+        if supabase is None:
+            print(f"[SUPABASE] ❌ ERROR: Supabase client is not initialized in get_all_active_users!")
+            return []
+            
+        # Get all unique user-bot pairs from message history
+        response = supabase.table("message_paritition") \
+            .select("email, bot_id") \
+            .execute()
+        
+        # Create unique pairs
+        pairs = {(item["email"], item["bot_id"]) for item in response.data if item.get("email") and item.get("bot_id")}
+        params_list = []
+        
+        for email, bot_id in pairs:
+            try:
+                user_details = supabase.table("user_details").select("*").eq("email", email).single().execute().data or {}
+                bot_details = supabase.table("bot_personality_details").select("*").eq("bot_id", bot_id).single().execute().data or {}
+                user_name = user_details.get("name", email.split("@")[0])
+                user_gender = user_details.get("gender", "Other")
+                user_city = user_details.get("city") or "India"
+                custom_bot_name = bot_details.get("bot_name", bot_id)
+                bot_city = bot_details.get("bot_city", "India")
+                language = "English"
+                traits = ""
+                raw_bot_prompt = get_bot_prompt(bot_id)
+                bot_prompt = raw_bot_prompt.format(
+                    custom_bot_name=custom_bot_name,
+                    traitsString=traits,
+                    userName=user_name,
+                    userGender=user_gender,
+                    languageString=language
+                )
+                params_list.append({
+                    "email": email,
+                    "bot_id": bot_id,
+                    "user_name": user_name,
+                    "user_gender": user_gender,
+                    "custom_bot_name": custom_bot_name,
+                    "language": language,
+                    "traits": traits,
+                    "bot_prompt": bot_prompt,
+                    "bot_city": bot_city,
+                    "user_location": user_city
+                })
+            except Exception as e:
+                print(f"[SUPABASE] ⚠️  WARNING: Failed to get details for {email}/{bot_id}: {e}")
+                continue
+                
+        print(f"[PROACTIVE] Found {len(params_list)} active user-bot pairs for proactive messaging")
+        return params_list
+    except Exception as e:
+        logging.error(f"Exception in get_all_active_users: {e}")
+        return []
+
+def get_last_proactive_message_time(email, bot_id):
+    """
+    Get the timestamp of the last proactive message sent to a user-bot pair.
+    Returns None if no proactive message has been sent before.
+    """
+    try:
+        if supabase is None:
+            print(f"[SUPABASE] ❌ ERROR: Supabase client is not initialized in get_last_proactive_message_time!")
+            return None
+            
+        # Look for the most recent proactive message
+        response = supabase.table("message_paritition") \
+            .select("created_at") \
+            .eq("email", email) \
+            .eq("bot_id", bot_id) \
+            .in_("activity_name", ["proactive_weather_update", "proactive_news_update", "proactive_general_update"]) \
+            .order("created_at", desc=True) \
+            .limit(1) \
+            .execute()
+        
+        if response.data and len(response.data) > 0:
+            last_message_time = response.data[0]["created_at"]
+            print(f"[PROACTIVE] Last proactive message for {email}/{bot_id}: {last_message_time}")
+            return last_message_time
+        else:
+            print(f"[PROACTIVE] No previous proactive messages found for {email}/{bot_id}")
+            return None
+            
+    except Exception as e:
+        logging.error(f"Exception in get_last_proactive_message_time for {email}/{bot_id}: {e}")
+        return None
+
+def should_send_proactive_message(email, bot_id, days_interval=3):
+    """
+    Check if enough time has passed since the last proactive message to send a new one.
+    Returns True if it's time to send a proactive message.
+    """
+    try:
+        last_message_time = get_last_proactive_message_time(email, bot_id)
+        
+        if last_message_time is None:
+            # No previous proactive message, so it's time to send one
+            print(f"[PROACTIVE] No previous proactive message for {email}/{bot_id}, will send first message")
+            return True
+        
+        # Parse the timestamp and check if enough days have passed
+        from datetime import datetime
+        last_time = datetime.fromisoformat(last_message_time.replace('Z', '+00:00'))
+        current_time = datetime.now(timezone.utc)
+        time_diff = current_time - last_time
+        
+        days_passed = time_diff.days + (time_diff.seconds / 86400)  # Include fractional days
+        
+        if days_passed >= days_interval:
+            print(f"[PROACTIVE] {days_passed:.1f} days passed since last proactive message for {email}/{bot_id}, will send new message")
+            return True
+        else:
+            print(f"[PROACTIVE] Only {days_passed:.1f} days passed since last proactive message for {email}/{bot_id}, skipping")
+            return False
+            
+    except Exception as e:
+        logging.error(f"Exception in should_send_proactive_message for {email}/{bot_id}: {e}")
+        return False
+
 def insert_bot_message(email, bot_id, message, activity_name="bot_alert"):
     """
     Enhanced function to insert bot messages with activity tracking.
@@ -493,12 +617,202 @@ def send_news_user_alerts():
                 activity_name="news_alert_user"
             )
 
+# --- Proactive Messaging Functions ---
+
+def generate_proactive_weather_message(persona_prompt, user_name, language, bot_location, user_location="India"):
+    """
+    Generate a proactive weather update message for users.
+    This sends weather information even when there's no breaking weather news.
+    """
+    try:
+        from news_weather_agent import open_weather_map_tool, get_weather_response
+        
+        # Get current weather for user location
+        weather_summary = open_weather_map_tool._run(city_name=user_location)
+        
+        # Generate a friendly weather update message
+        response = get_weather_response(
+            weather_summary, persona_prompt, user_name, language, bot_location, user_location, context="user"
+        )
+        
+        # Add a friendly greeting to make it more proactive
+        proactive_message = f"Hey {user_name}! Just wanted to share a quick weather update with you. {response}"
+        
+        return proactive_message
+        
+    except Exception as e:
+        print(f"Error generating proactive weather message: {e}")
+        return f"Hey {user_name}! Hope you're having a great day! Just wanted to check in and see how you're doing. How's the weather treating you?"
+
+def generate_proactive_news_message(persona_prompt, user_name, language, bot_location, user_location="India"):
+    """
+    Generate a proactive news update message for users.
+    This sends general news information to keep users informed.
+    """
+    try:
+        from news_weather_agent import crew, get_news_response
+        
+        # Get latest news for user location
+        api_key = os.environ.get("GEMINI_API_KEY")
+        from llama_index.llms.google_genai import GoogleGenAI
+        llm = GoogleGenAI(model="gemini-1.5-flash", api_key=api_key)
+        location = llm.complete(f"Only give the answer for the question\nIf user_location is country, then answer the same name, if it is city, then answer in the country which that city belongs\nWhat is the location of {user_location}?\n")
+        
+        topic = f"Latest National news in {location} today"
+        result = crew.kickoff(inputs={'topic': topic})
+        news_summary = str(result)
+        
+        # Generate a friendly news update message
+        response = get_news_response(
+            news_summary, persona_prompt, user_name, language, bot_location, user_location, context="user"
+        )
+        
+        # Add a friendly greeting to make it more proactive
+        proactive_message = f"Hey {user_name}! Thought you might be interested in what's happening around. {response}"
+        
+        return proactive_message
+        
+    except Exception as e:
+        print(f"Error generating proactive news message: {e}")
+        return f"Hey {user_name}! Hope you're doing well! Just wanted to reach out and see how things are going with you. Anything interesting happening in your area?"
+
+def send_proactive_weather_updates():
+    """
+    Send proactive weather updates to users who haven't received a message in 3 days.
+    """
+    print("[PROACTIVE] Starting proactive weather updates...")
+    sent_count = 0
+    
+    for params in get_all_active_users():
+        try:
+            # Check if it's time to send a proactive message
+            if should_send_proactive_message(params["email"], params["bot_id"], days_interval=3):
+                # Generate proactive weather message
+                message = generate_proactive_weather_message(
+                    params["bot_prompt"],
+                    params["user_name"],
+                    params["language"],
+                    params["bot_city"],
+                    params["user_location"]
+                )
+                
+                # Send the message
+                success = insert_bot_message(
+                    email=params["email"],
+                    bot_id=params["bot_id"],
+                    message=message,
+                    activity_name="proactive_weather_update"
+                )
+                
+                if success:
+                    sent_count += 1
+                    print(f"[PROACTIVE] Sent weather update to {params['email']}/{params['bot_id']}")
+                else:
+                    print(f"[PROACTIVE] Failed to send weather update to {params['email']}/{params['bot_id']}")
+            else:
+                print(f"[PROACTIVE] Skipping {params['email']}/{params['bot_id']} - too soon for next message")
+                
+        except Exception as e:
+            print(f"[PROACTIVE] Error processing {params['email']}/{params['bot_id']}: {e}")
+            continue
+    
+    print(f"[PROACTIVE] Proactive weather updates completed. Sent {sent_count} messages.")
+    return sent_count
+
+def send_proactive_news_updates():
+    """
+    Send proactive news updates to users who haven't received a message in 3 days.
+    """
+    print("[PROACTIVE] Starting proactive news updates...")
+    sent_count = 0
+    
+    for params in get_all_active_users():
+        try:
+            # Check if it's time to send a proactive message
+            if should_send_proactive_message(params["email"], params["bot_id"], days_interval=3):
+                # Generate proactive news message
+                message = generate_proactive_news_message(
+                    params["bot_prompt"],
+                    params["user_name"],
+                    params["language"],
+                    params["bot_city"],
+                    params["user_location"]
+                )
+                
+                # Send the message
+                success = insert_bot_message(
+                    email=params["email"],
+                    bot_id=params["bot_id"],
+                    message=message,
+                    activity_name="proactive_news_update"
+                )
+                
+                if success:
+                    sent_count += 1
+                    print(f"[PROACTIVE] Sent news update to {params['email']}/{params['bot_id']}")
+                else:
+                    print(f"[PROACTIVE] Failed to send news update to {params['email']}/{params['bot_id']}")
+            else:
+                print(f"[PROACTIVE] Skipping {params['email']}/{params['bot_id']} - too soon for next message")
+                
+        except Exception as e:
+            print(f"[PROACTIVE] Error processing {params['email']}/{params['bot_id']}: {e}")
+            continue
+    
+    print(f"[PROACTIVE] Proactive news updates completed. Sent {sent_count} messages.")
+    return sent_count
+
+def send_proactive_general_updates():
+    """
+    Send general proactive updates to users who haven't received a message in 3 days.
+    This is a fallback for when weather/news updates aren't available.
+    """
+    print("[PROACTIVE] Starting proactive general updates...")
+    sent_count = 0
+    
+    for params in get_all_active_users():
+        try:
+            # Check if it's time to send a proactive message
+            if should_send_proactive_message(params["email"], params["bot_id"], days_interval=3):
+                # Generate a general friendly message
+                message = f"Hey {params['user_name']}! Hope you're having a wonderful day! Just wanted to reach out and see how you're doing. Feel free to chat with me anytime if you want to know about the weather or latest news!"
+                
+                # Send the message
+                success = insert_bot_message(
+                    email=params["email"],
+                    bot_id=params["bot_id"],
+                    message=message,
+                    activity_name="proactive_general_update"
+                )
+                
+                if success:
+                    sent_count += 1
+                    print(f"[PROACTIVE] Sent general update to {params['email']}/{params['bot_id']}")
+                else:
+                    print(f"[PROACTIVE] Failed to send general update to {params['email']}/{params['bot_id']}")
+            else:
+                print(f"[PROACTIVE] Skipping {params['email']}/{params['bot_id']} - too soon for next message")
+                
+        except Exception as e:
+            print(f"[PROACTIVE] Error processing {params['email']}/{params['bot_id']}: {e}")
+            continue
+    
+    print(f"[PROACTIVE] Proactive general updates completed. Sent {sent_count} messages.")
+    return sent_count
+
 def start_scheduler():
     scheduler = BackgroundScheduler()
-    scheduler.add_job(send_weather_user_alerts, 'cron', hour=8)
-    scheduler.add_job(send_weather_bot_alerts, 'cron', hour=14)
-    scheduler.add_job(send_news_user_alerts, 'cron', hour=19)
+    
+    # New proactive messaging jobs (every 3 days)
+    # Weather updates at 10 AM every 3 days
+    scheduler.add_job(send_proactive_weather_updates, 'cron', hour=10, day='*/3')
+    # News updates at 4 PM every 3 days  
+    scheduler.add_job(send_proactive_news_updates, 'cron', hour=16, day='*/3')
+    # General updates at 6 PM every 3 days (fallback)
+    scheduler.add_job(send_proactive_general_updates, 'cron', hour=18, day='*/3')
+    
     scheduler.start()
+    print("[SCHEDULER] Proactive messaging scheduler started with 3-day intervals")
 
 # --- Startup event handlers ---
 app.add_event_handler("startup", scheduled_weekly_news_summary)
@@ -578,6 +892,71 @@ async def run_news_alerts_bot():
             )
             count += 1
     return {"status": f"News alerts for bots triggered - {count} alerts sent"}
+
+# --- Proactive Messaging Manual Trigger Endpoints ---
+
+@app.post("/run_proactive_weather_updates")
+async def run_proactive_weather_updates():
+    """Manually trigger proactive weather updates for all users"""
+    count = send_proactive_weather_updates()
+    return {"status": f"Proactive weather updates triggered - {count} messages sent"}
+
+@app.post("/run_proactive_news_updates")
+async def run_proactive_news_updates():
+    """Manually trigger proactive news updates for all users"""
+    count = send_proactive_news_updates()
+    return {"status": f"Proactive news updates triggered - {count} messages sent"}
+
+@app.post("/run_proactive_general_updates")
+async def run_proactive_general_updates():
+    """Manually trigger proactive general updates for all users"""
+    count = send_proactive_general_updates()
+    return {"status": f"Proactive general updates triggered - {count} messages sent"}
+
+@app.post("/run_all_proactive_updates")
+async def run_all_proactive_updates():
+    """Manually trigger all proactive updates for all users"""
+    weather_count = send_proactive_weather_updates()
+    news_count = send_proactive_news_updates()
+    general_count = send_proactive_general_updates()
+    total_count = weather_count + news_count + general_count
+    return {
+        "status": f"All proactive updates triggered",
+        "weather_updates": weather_count,
+        "news_updates": news_count,
+        "general_updates": general_count,
+        "total_messages": total_count
+    }
+
+@app.get("/proactive_status")
+async def get_proactive_status():
+    """Get status of proactive messaging system"""
+    try:
+        active_users = get_all_active_users()
+        user_count = len(active_users)
+        
+        # Count users who would receive proactive messages
+        eligible_count = 0
+        for params in active_users:
+            if should_send_proactive_message(params["email"], params["bot_id"], days_interval=3):
+                eligible_count += 1
+        
+        return {
+            "status": "success",
+            "total_active_users": user_count,
+            "eligible_for_proactive_messages": eligible_count,
+            "proactive_interval_days": 3,
+            "scheduled_times": {
+                "weather_updates": "10:00 AM every 3 days",
+                "news_updates": "4:00 PM every 3 days", 
+                "general_updates": "6:00 PM every 3 days"
+            }
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Failed to get proactive status: {str(e)}"
+        }
 
 # --- Supabase Connection Test Endpoint ---
 @app.get("/test_supabase_connection")
