@@ -193,6 +193,37 @@ def get_all_active_users():
         logging.error(f"Exception in get_all_active_users: {e}")
         return []
 
+def get_user_bot_friendship_time(email, bot_id):
+    """
+    Get the timestamp when a user first added the bot as a friend (first interaction).
+    Returns None if no interaction has been recorded.
+    """
+    try:
+        if supabase is None:
+            print(f"[SUPABASE] ❌ ERROR: Supabase client is not initialized in get_user_bot_friendship_time!")
+            return None
+            
+        # Look for the first interaction between user and bot
+        response = supabase.table("message_paritition") \
+            .select("created_at") \
+            .eq("email", email) \
+            .eq("bot_id", bot_id) \
+            .order("created_at", desc=False) \
+            .limit(1) \
+            .execute()
+        
+        if response.data and len(response.data) > 0:
+            friendship_time = response.data[0]["created_at"]
+            print(f"[PROACTIVE] User {email} added bot {bot_id} as friend at: {friendship_time}")
+            return friendship_time
+        else:
+            print(f"[PROACTIVE] No friendship record found for {email}/{bot_id}")
+            return None
+            
+    except Exception as e:
+        logging.error(f"Exception in get_user_bot_friendship_time for {email}/{bot_id}: {e}")
+        return None
+
 def get_last_proactive_message_time(email, bot_id):
     """
     Get the timestamp of the last proactive message sent to a user-bot pair.
@@ -227,31 +258,47 @@ def get_last_proactive_message_time(email, bot_id):
 
 def should_send_proactive_message(email, bot_id, days_interval=3):
     """
-    Check if enough time has passed since the last proactive message to send a new one.
-    Returns True if it's time to send a proactive message.
+    Check if it's time to send a proactive message based on friendship time and last message time.
+    Logic:
+    1. If no previous proactive message: Check if 3+ days have passed since friendship
+    2. If previous proactive message exists: Check if 3+ days have passed since last message
     """
     try:
+        # Get when user first added the bot as friend
+        friendship_time = get_user_bot_friendship_time(email, bot_id)
+        if friendship_time is None:
+            print(f"[PROACTIVE] No friendship record for {email}/{bot_id}, skipping")
+            return False
+        
+        # Get last proactive message time
         last_message_time = get_last_proactive_message_time(email, bot_id)
         
-        if last_message_time is None:
-            # No previous proactive message, so it's time to send one
-            print(f"[PROACTIVE] No previous proactive message for {email}/{bot_id}, will send first message")
-            return True
-        
-        # Parse the timestamp and check if enough days have passed
-        from datetime import datetime
-        last_time = datetime.fromisoformat(last_message_time.replace('Z', '+00:00'))
         current_time = datetime.now(timezone.utc)
-        time_diff = current_time - last_time
         
-        days_passed = time_diff.days + (time_diff.seconds / 86400)  # Include fractional days
-        
-        if days_passed >= days_interval:
-            print(f"[PROACTIVE] {days_passed:.1f} days passed since last proactive message for {email}/{bot_id}, will send new message")
-            return True
+        if last_message_time is None:
+            # No previous proactive message - check if 3+ days have passed since friendship
+            friendship_datetime = datetime.fromisoformat(friendship_time.replace('Z', '+00:00'))
+            time_since_friendship = current_time - friendship_datetime
+            days_since_friendship = time_since_friendship.days + (time_since_friendship.seconds / 86400)
+            
+            if days_since_friendship >= days_interval:
+                print(f"[PROACTIVE] {days_since_friendship:.1f} days since friendship for {email}/{bot_id}, will send first proactive message")
+                return True
+            else:
+                print(f"[PROACTIVE] Only {days_since_friendship:.1f} days since friendship for {email}/{bot_id}, waiting for 3 days")
+                return False
         else:
-            print(f"[PROACTIVE] Only {days_passed:.1f} days passed since last proactive message for {email}/{bot_id}, skipping")
-            return False
+            # Previous proactive message exists - check if 3+ days have passed since last message
+            last_time = datetime.fromisoformat(last_message_time.replace('Z', '+00:00'))
+            time_since_last_message = current_time - last_time
+            days_since_last_message = time_since_last_message.days + (time_since_last_message.seconds / 86400)
+            
+            if days_since_last_message >= days_interval:
+                print(f"[PROACTIVE] {days_since_last_message:.1f} days since last proactive message for {email}/{bot_id}, will send new message")
+                return True
+            else:
+                print(f"[PROACTIVE] Only {days_since_last_message:.1f} days since last proactive message for {email}/{bot_id}, skipping")
+                return False
             
     except Exception as e:
         logging.error(f"Exception in should_send_proactive_message for {email}/{bot_id}: {e}")
@@ -676,6 +723,39 @@ def generate_proactive_news_message(persona_prompt, user_name, language, bot_loc
         print(f"Error generating proactive news message: {e}")
         return f"Hey {user_name}! Hope you're doing well! Just wanted to reach out and see how things are going with you. Anything interesting happening in your area?"
 
+def get_next_message_type(email, bot_id):
+    """
+    Determine the next message type (weather or news) based on the last proactive message sent.
+    Alternates between weather and news updates.
+    """
+    try:
+        if supabase is None:
+            return "weather"  # Default to weather
+            
+        # Get the last proactive message type
+        response = supabase.table("message_paritition") \
+            .select("activity_name") \
+            .eq("email", email) \
+            .eq("bot_id", bot_id) \
+            .in_("activity_name", ["proactive_weather_update", "proactive_news_update"]) \
+            .order("created_at", desc=True) \
+            .limit(1) \
+            .execute()
+        
+        if response.data and len(response.data) > 0:
+            last_activity = response.data[0]["activity_name"]
+            if last_activity == "proactive_weather_update":
+                return "news"  # Alternate to news
+            else:
+                return "weather"  # Alternate to weather
+        else:
+            # No previous proactive message, start with weather
+            return "weather"
+            
+    except Exception as e:
+        print(f"[PROACTIVE] Error determining next message type for {email}/{bot_id}: {e}")
+        return "weather"  # Default to weather
+
 def send_proactive_weather_updates():
     """
     Send proactive weather updates to users who haven't received a message in 3 days.
@@ -687,28 +767,33 @@ def send_proactive_weather_updates():
         try:
             # Check if it's time to send a proactive message
             if should_send_proactive_message(params["email"], params["bot_id"], days_interval=3):
-                # Generate proactive weather message
-                message = generate_proactive_weather_message(
-                    params["bot_prompt"],
-                    params["user_name"],
-                    params["language"],
-                    params["bot_city"],
-                    params["user_location"]
-                )
-                
-                # Send the message
-                success = insert_bot_message(
-                    email=params["email"],
-                    bot_id=params["bot_id"],
-                    message=message,
-                    activity_name="proactive_weather_update"
-                )
-                
-                if success:
-                    sent_count += 1
-                    print(f"[PROACTIVE] Sent weather update to {params['email']}/{params['bot_id']}")
+                # Check if this user should get a weather update (alternating logic)
+                next_type = get_next_message_type(params["email"], params["bot_id"])
+                if next_type == "weather":
+                    # Generate proactive weather message
+                    message = generate_proactive_weather_message(
+                        params["bot_prompt"],
+                        params["user_name"],
+                        params["language"],
+                        params["bot_city"],
+                        params["user_location"]
+                    )
+                    
+                    # Send the message
+                    success = insert_bot_message(
+                        email=params["email"],
+                        bot_id=params["bot_id"],
+                        message=message,
+                        activity_name="proactive_weather_update"
+                    )
+                    
+                    if success:
+                        sent_count += 1
+                        print(f"[PROACTIVE] Sent weather update to {params['email']}/{params['bot_id']}")
+                    else:
+                        print(f"[PROACTIVE] Failed to send weather update to {params['email']}/{params['bot_id']}")
                 else:
-                    print(f"[PROACTIVE] Failed to send weather update to {params['email']}/{params['bot_id']}")
+                    print(f"[PROACTIVE] Skipping {params['email']}/{params['bot_id']} - next message should be news")
             else:
                 print(f"[PROACTIVE] Skipping {params['email']}/{params['bot_id']} - too soon for next message")
                 
@@ -730,28 +815,33 @@ def send_proactive_news_updates():
         try:
             # Check if it's time to send a proactive message
             if should_send_proactive_message(params["email"], params["bot_id"], days_interval=3):
-                # Generate proactive news message
-                message = generate_proactive_news_message(
-                    params["bot_prompt"],
-                    params["user_name"],
-                    params["language"],
-                    params["bot_city"],
-                    params["user_location"]
-                )
-                
-                # Send the message
-                success = insert_bot_message(
-                    email=params["email"],
-                    bot_id=params["bot_id"],
-                    message=message,
-                    activity_name="proactive_news_update"
-                )
-                
-                if success:
-                    sent_count += 1
-                    print(f"[PROACTIVE] Sent news update to {params['email']}/{params['bot_id']}")
+                # Check if this user should get a news update (alternating logic)
+                next_type = get_next_message_type(params["email"], params["bot_id"])
+                if next_type == "news":
+                    # Generate proactive news message
+                    message = generate_proactive_news_message(
+                        params["bot_prompt"],
+                        params["user_name"],
+                        params["language"],
+                        params["bot_city"],
+                        params["user_location"]
+                    )
+                    
+                    # Send the message
+                    success = insert_bot_message(
+                        email=params["email"],
+                        bot_id=params["bot_id"],
+                        message=message,
+                        activity_name="proactive_news_update"
+                    )
+                    
+                    if success:
+                        sent_count += 1
+                        print(f"[PROACTIVE] Sent news update to {params['email']}/{params['bot_id']}")
+                    else:
+                        print(f"[PROACTIVE] Failed to send news update to {params['email']}/{params['bot_id']}")
                 else:
-                    print(f"[PROACTIVE] Failed to send news update to {params['email']}/{params['bot_id']}")
+                    print(f"[PROACTIVE] Skipping {params['email']}/{params['bot_id']} - next message should be weather")
             else:
                 print(f"[PROACTIVE] Skipping {params['email']}/{params['bot_id']} - too soon for next message")
                 
@@ -803,16 +893,20 @@ def send_proactive_general_updates():
 def start_scheduler():
     scheduler = BackgroundScheduler()
     
+    # Existing alert jobs (daily at specific times)
+    scheduler.add_job(send_weather_user_alerts, 'cron', hour=8)
+    scheduler.add_job(send_weather_bot_alerts, 'cron', hour=14)
+    scheduler.add_job(send_news_user_alerts, 'cron', hour=19)
+    
     # New proactive messaging jobs (every 3 days)
-    # Weather updates at 10 AM every 3 days
+    # Combined proactive updates at 10 AM every 3 days (alternates between weather and news)
     scheduler.add_job(send_proactive_weather_updates, 'cron', hour=10, day='*/3')
-    # News updates at 4 PM every 3 days  
-    scheduler.add_job(send_proactive_news_updates, 'cron', hour=16, day='*/3')
+    scheduler.add_job(send_proactive_news_updates, 'cron', hour=10, day='*/3')
     # General updates at 6 PM every 3 days (fallback)
     scheduler.add_job(send_proactive_general_updates, 'cron', hour=18, day='*/3')
     
     scheduler.start()
-    print("[SCHEDULER] Proactive messaging scheduler started with 3-day intervals")
+    print("[SCHEDULER] Proactive messaging scheduler started with 3-day intervals and alternating weather/news updates")
 
 # --- Startup event handlers ---
 app.add_event_handler("startup", scheduled_weekly_news_summary)
@@ -946,10 +1040,11 @@ async def get_proactive_status():
             "total_active_users": user_count,
             "eligible_for_proactive_messages": eligible_count,
             "proactive_interval_days": 3,
+            "message_logic": "First message sent 3 days after friendship, then alternating weather/news every 3 days",
             "scheduled_times": {
-                "weather_updates": "10:00 AM every 3 days",
-                "news_updates": "4:00 PM every 3 days", 
-                "general_updates": "6:00 PM every 3 days"
+                "proactive_updates": "10:00 AM every 3 days (alternates weather/news)",
+                "general_updates": "6:00 PM every 3 days (fallback)",
+                "breaking_alerts": "8:00 AM (weather), 2:00 PM (weather), 7:00 PM (news) daily"
             }
         }
     except Exception as e:
