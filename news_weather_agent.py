@@ -97,6 +97,14 @@ class OpenWeatherMapTool(BaseTool):
     name: str = "OpenWeatherMap Weather Fetch"
     description: str = "Fetches the current weather conditions for a given city."
 
+    def _normalize_location(self, city_name: str) -> str:
+        """Map unsupported locations to nearby supported ones."""
+        mapping = {
+            "jumeirah": "Dubai",
+            # add more mappings here if needed
+        }
+        return mapping.get(city_name.strip().lower(), city_name)
+
     def _run(self, city_name: str) -> str:
         """
         Execute the tool with the given city name.
@@ -107,16 +115,19 @@ class OpenWeatherMapTool(BaseTool):
         Returns:
             str: A formatted string of the current weather conditions.
         """
+        # ✅ Normalize city before API call
+        normalized_city = self._normalize_location(city_name)
+
         api_key = os.environ.get("OPENWEATHER_API_KEY")
         base_url = "http://api.openweathermap.org/data/2.5/weather?"
-        complete_url = f"{base_url}q={city_name}&appid={api_key}&units=metric"
+        complete_url = f"{base_url}q={normalized_city}&appid={api_key}&units=metric"
 
         try:
             response = requests.get(complete_url)
             data = response.json()
 
             if data.get("cod") != 200:
-                return f"Error: Could not retrieve weather for {city_name}. API response: {data.get('message', 'Unknown error')}"
+                return f"Error: Could not retrieve weather for {normalized_city}. API response: {data.get('message', 'Unknown error')}"
             else:
                 main_data = data["main"]
                 weather_data = data["weather"][0]
@@ -125,11 +136,16 @@ class OpenWeatherMapTool(BaseTool):
                 humidity = main_data["humidity"]
                 description = weather_data["description"]
                 # Use a consistent, lowercase format for the output
-                return f"city: {city_name}, temperature: {temperature}°C, pressure: {pressure} hPa, humidity: {humidity}%, weather: {description}"
+                return (
+                    f"city: {normalized_city}, "
+                    f"temperature: {temperature}°C, "
+                    f"pressure: {pressure} hPa, "
+                    f"humidity: {humidity}%, "
+                    f"weather: {description}"
+                )
 
         except requests.exceptions.RequestException as e:
             return f"Error fetching weather data: {e}"
-
 # Initialize the custom tools
 custom_google_search_tool = GoogleSearchAndFetchTool()
 open_weather_map_tool = OpenWeatherMapTool()
