@@ -220,7 +220,6 @@ Your turn:
         print(f"[ERROR] Persona summary generation failed: {e}")
         return "I saw some news, but I'm not sure what to make of it. What do you think?"
 
-# ✅ ORIGINAL IMPLEMENTATION: Restored your detailed persona-based weather response function.
 def get_weather_response(weather_summary, persona_prompt, user_name, language, bot_location, user_location = None , context = "bot"):
     match = re.search(r"weather:\s*(.*?)(?:$|,)", weather_summary, re.IGNORECASE)
     weather_desc = match.group(1).lower().strip() if match else "pleasant"
@@ -232,8 +231,6 @@ def get_weather_response(weather_summary, persona_prompt, user_name, language, b
     else:
         return f"It’s {weather_desc} in {bot_location}, {feeling}."
 
-
-# ✅ ORIGINAL IMPLEMENTATION: Restored your detailed persona-based temperature response function.
 def get_temperature_response(weather_summary, persona_prompt, user_name, language, location):
     match = re.search(r"temperature:\s*([\d\.-]+)°C", weather_summary, re.IGNORECASE)
     if not match: return "I'm sorry, I couldn't find the temperature."
@@ -246,7 +243,7 @@ Only the temperature should be expressed in numbers, not words.
 
 Personality: {persona_prompt}
 
-Format: Only say how you feel about the temperature, in {language}, as if talking to a friend named {user_name}. Include the temperature in the response and make it sound natural to your persona.
+Format: Only say how you feel about the temperature, in {language}, as if talking to a friend named {user_name}. Include the temperature in the response and make it sound natural to your persona.Only the temperature should be expressed in numbers, not words.
 """
     api_key = os.environ.get("GEMINI_API_KEY")
     model = "gemini-1.5-flash"
@@ -293,12 +290,8 @@ async def persona_response(user_message, persona_prompt, language, user_name, us
     print(f"[DEBUG] Final response: {response}")
     return response
 
-# Function to check if the weather summary contains interesting weather conditions
+# --- Alerting and Summary Functions ---
 def is_interesting_weather(weather_text):
-    """
-    Returns True if the weather text contains interesting weather conditions that warrant an alert.
-    """
-    # Adjusted to check the new structured output from the API
     keywords = [
         "storm", "thunderstorm", "heavy rain", "downpour", "flooding", "hailstorm",
         "heat wave", "cold wave", "freezing", "snow", "blizzard", "cyclone", "hurricane",
@@ -309,12 +302,7 @@ def is_interesting_weather(weather_text):
     pattern = r"|".join([re.escape(word) for word in keywords])
     return re.search(pattern, weather_text, re.IGNORECASE) is not None
 
-# Function to check if the news summary contains a major event
 def is_major_event(news_text):
-    """
-    Returns True if the news text contains major political, economic or tragid event keywords.
-    ... (rest of the function remains the same)
-    """
     keywords = [
         "election", "government collapse", "cabinet reshuffle",
         "inflation", "stock market crash", "economic crisis", "policy change", "sanctions",
@@ -325,39 +313,20 @@ def is_major_event(news_text):
     pattern = r"|".join([re.escape(word) for word in keywords])
     return re.search(pattern, news_text, re.IGNORECASE) is not None
 
-# Weekly News Summary Function
 def generate_weekly_news_summary(persona_prompt, user_name, language,bot_location, user_location = "India"):
-    # ... (rest of the function remains the same)
-    api_key = os.environ.get("GEMINI_API_KEY")
-    model = "gemini-1.5-flash"
-    llm = GoogleGenAI(model=model, api_key=api_key)
-    location = llm.complete(f"Only give the answer for the question\nIf user_location is country, then answer the same name, if it is city, then answer in the country which that city belongs\nWhat is the location of {user_location}?\n")
-    topic = f"Latest National news in {location} this week"
+    topic = f"Latest National news in {user_location} this week"
     result = crew.kickoff(inputs={'topic': topic})
     news_summary = str(result)
-    response = get_news_response(
-        news_summary, persona_prompt, user_name, language, bot_location, user_location, context="user"
-    )
+    # The create_persona_summary function is better for this
+    response = create_persona_summary(news_summary, persona_prompt, user_name, user_location, language)
     return response
 
-
-# Weather Alert Function for User Location
 def check_and_alert_for_weather_user(persona_prompt, user_name, language, bot_location, user_location="India"):
-    """
-    Checks for interesting weather conditions in user location and generates an alert if found.
-    """
     try:
-        # Use the new tool directly instead of crew.kickoff
         weather_summary = open_weather_map_tool._run(city_name=user_location)
         if is_interesting_weather(weather_summary):
-            if user_location == bot_location:
-                response = get_weather_response(
-                    weather_summary, persona_prompt, user_name, language, bot_location, user_location, context="bot"
-                )
-            else :
-                response = get_weather_response(
-                    weather_summary, persona_prompt, user_name, language, bot_location, user_location, context="user"
-                )
+            context = "user" if user_location != bot_location else "bot"
+            response = get_weather_response(weather_summary, persona_prompt, user_name, language, bot_location, user_location, context)
             return response
         else:
             print(f"No interesting weather conditions for {user_location}.")
@@ -366,18 +335,11 @@ def check_and_alert_for_weather_user(persona_prompt, user_name, language, bot_lo
         print(f"Error in weather alert for user location: {e}")
         return None
 
-# Weather Alert Function for Bot Location
 def check_and_alert_for_weather_bot(persona_prompt, user_name, language, bot_location, user_location="India"):
-    """
-    Checks for interesting weather conditions in bot location and generates an alert if found.
-    """
     try:
-        # Use the new tool directly instead of crew.kickoff
         weather_summary = open_weather_map_tool._run(city_name=bot_location)
         if is_interesting_weather(weather_summary):
-            response = get_weather_response(
-                weather_summary, persona_prompt, user_name, language, bot_location, user_location, context="bot"
-            )
+            response = get_weather_response(weather_summary, persona_prompt, user_name, language, bot_location, user_location, "bot")
             return response
         else:
             print(f"No interesting weather conditions for {bot_location}.")
@@ -386,21 +348,13 @@ def check_and_alert_for_weather_bot(persona_prompt, user_name, language, bot_loc
         print(f"Error in weather alert for bot location: {e}")
         return None
 
-# Event-Driven News Alert Function for User Location
 def check_and_alert_for_major_events_user(persona_prompt, user_name, language, bot_location, user_location="India"):
-    # ... (rest of the function remains the same)
     try:
-        api_key = os.environ.get("GEMINI_API_KEY")
-        model = "gemini-1.5-flash"
-        llm = GoogleGenAI(model=model, api_key=api_key)
-        location = llm.complete(f"Only give the answer for the question\nIf user_location is country, then answer the same name, if it is city, then answer in the country which that city belongs\nWhat is the location of {user_location}?\n")
-        topic = f"Latest National news in {location}"
+        topic = f"Latest National news in {user_location}"
         result = crew.kickoff(inputs={'topic': topic})
         news_summary = str(result)
         if is_major_event(news_summary):
-            response = get_news_response(
-                news_summary, persona_prompt, user_name, language, bot_location, user_location, context="user"
-            )
+            response = create_persona_summary(news_summary, persona_prompt, user_name, user_location, language)
             return response
         else:
             print(f"No major political/economic/tragic event detected for {user_location}.")
@@ -409,17 +363,13 @@ def check_and_alert_for_major_events_user(persona_prompt, user_name, language, b
         print(f"Error in news alert for user location: {e}")
         return None
 
-# Event-Driven News Alert Function for Bot Location
 def check_and_alert_for_major_events_bot(persona_prompt, user_name, language, bot_location, user_location="India"):
-    # ... (rest of the function remains the same)
     try:
         topic = f"Latest National news in {bot_location}"
         result = crew.kickoff(inputs={'topic': topic})
         news_summary = str(result)
         if is_major_event(news_summary):
-            response = get_news_response(
-                news_summary, persona_prompt, user_name, language, bot_location, user_location, context="bot"
-            )
+            response = create_persona_summary(news_summary, persona_prompt, user_name, bot_location, language)
             return response
         else:
             print(f"No major political/economic/tragic event detected for {bot_location}.")
@@ -428,10 +378,5 @@ def check_and_alert_for_major_events_bot(persona_prompt, user_name, language, bo
         print(f"Error in news alert for bot location: {e}")
         return None
 
-# Legacy function for backward compatibility - now points to user location
 def check_and_alert_for_major_events(persona_prompt, user_name, language, bot_location, user_location="India"):
-    """
-    Legacy function - now calls the user location version for backward compatibility.
-    ... (rest of the function remains the same)
-    """
     return check_and_alert_for_major_events_user(persona_prompt, user_name, language, bot_location, user_location)
