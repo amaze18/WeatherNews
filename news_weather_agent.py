@@ -173,13 +173,30 @@ Your task is to tell them the temperature in {location}.
 
 The exact temperature is {temperature}°C.
 
+def get_weather_response(weather_summary, persona_prompt, user_name, language, bot_location, user_location = None , context = "bot"):
+    match = re.search(r"weather:\s*(.*?)(?:$|,)", weather_summary, re.IGNORECASE)
+    weather_desc = match.group(1).lower().strip() if match else "pleasant"
+    
+    feeling = get_persona_feeling(persona_prompt, weather_summary, user_name, language, bot_location, context=context, topic="weather")
+    
+    if context == "user" and user_location:
+        return f"I saw {user_location} had {weather_desc} weather, {feeling}."
+    else:
+        return f"It’s {weather_desc} in {bot_location}, {feeling}."
+
+def get_temperature_response(weather_summary, persona_prompt, user_name, language, location):
+    match = re.search(r"temperature:\s*([\d\.-]+)°C", weather_summary, re.IGNORECASE)
+    if not match: return "I'm sorry, I couldn't find the temperature."
+    temperature = match.group(1)
+
 Based on your persona, write a brief, 1-2 sentence conversational message.
 You MUST include the exact temperature value '{temperature}°C' in your response. The temperature must be expressed in numbers with its decimal points, not written out as words.
 End with a natural, engaging question.
 
 Example: "I just checked, and it's exactly {temperature}°C in {location} right now. A bit chilly if you ask me! Are you staying warm?"
 
-Your turn:
+
+Format: Only say how you feel about the temperature, in {language}, as if talking to a friend named {user_name}. Include the temperature in the response and make it sound natural to your persona.Only the temperature should be expressed in numbers, not words.
 """
     else:
         # Task is about general weather.
