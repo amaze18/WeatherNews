@@ -1,5 +1,5 @@
 # --- Import required libraries and modules ---
-from fastapi import FastAPI
+from fastapi import FastAPI, Body
 from pydantic import BaseModel
 from typing import Union
 from news_weather_agent import (
@@ -17,13 +17,10 @@ import os
 from dotenv import load_dotenv
 load_dotenv()
 from supabase import Client, create_client
-from datetime import datetime, timezone, time, timedelta
+from datetime import datetime, timezone, time
 import logging
 from fastapi_utils.tasks import repeat_every
 from apscheduler.schedulers.background import BackgroundScheduler
-import asyncio
-import random
-import hashlib
 from fastapi.middleware.cors import CORSMiddleware
 
 # --- Initialize FastAPI app ---
@@ -43,6 +40,7 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
+
 # --- Pydantic request model ---
 class QuestionRequest(BaseModel):
     message: Union[str, None] = None
@@ -57,6 +55,7 @@ class QuestionRequest(BaseModel):
     email: str = ""
     request_time: str = ""
     platform: str = ""
+
 
 # --- Helper functions ---
 def get_today_user_bot_pairs():
@@ -74,6 +73,7 @@ def get_today_user_bot_pairs():
     except Exception as e:
         logging.error(f"Exception in get_today_user_bot_pairs: {e}")
         return []
+
 
 def get_all_news_agent_params():
     pairs = get_today_user_bot_pairs()
@@ -110,13 +110,43 @@ def get_all_news_agent_params():
         })
     return params_list
 
-def insert_bot_message(email, bot_id, message):
-    supabase.table("message_paritition").insert({
-        "email": email,
-        "bot_id": bot_id,
-        "user_message": "",
-        "bot_response": message,
-    }).execute()
+
+# --- Deduplication Insert ---
+def insert_bot_message(email, bot_id, message, platform="scheduler"):
+    try:
+        utc_now = datetime.now(timezone.utc)
+        start = datetime.combine(utc_now.date(), time.min, tzinfo=timezone.utc).isoformat()
+        end = datetime.combine(utc_now.date(), time.max, tzinfo=timezone.utc).isoformat()
+
+        # check if this exact message already exists today
+        existing = supabase.table("message_paritition") \
+            .select("id") \
+            .eq("email", email) \
+            .eq("bot_id", bot_id) \
+            .eq("bot_response", message) \
+            .gte("created_at", start) \
+            .lte("created_at", end) \
+            .execute()
+
+        if existing.data:
+            logging.info(f"Skipping duplicate for {email}-{bot_id}")
+            return False
+
+        # insert if new
+        supabase.table("message_paritition").insert({
+            "email": email,
+            "bot_id": bot_id,
+            "user_message": "",
+            "bot_response": message,
+            "platform": platform
+        }).execute()
+
+        logging.info(f"Inserted new message for {email}-{bot_id}")
+        return True
+    except Exception as e:
+        logging.error(f"Error in insert_bot_message: {e}")
+        return False
+
 
 # --- Core logic for both endpoints ---
 async def handle_news_weather_agent(request: QuestionRequest):
@@ -144,6 +174,7 @@ async def handle_news_weather_agent(request: QuestionRequest):
         "language": request.language
     }
 
+
 # --- Endpoints ---
 @app.post("/news_weather_agent")
 async def news_weather_agent(request: QuestionRequest):
@@ -152,6 +183,7 @@ async def news_weather_agent(request: QuestionRequest):
 @app.post("/weather/news_weather_agent")
 async def news_weather_agent_alias(request: QuestionRequest):
     return await handle_news_weather_agent(request)
+
 
 # --- Scheduled tasks ---
 @repeat_every(seconds=60*60*24*7)
@@ -164,11 +196,8 @@ def scheduled_weekly_news_summary():
             params["bot_city"],
             params["user_location"]
         )
-        insert_bot_message(
-            email=params["email"],
-            bot_id=params["bot_id"],
-            message=summary
-        )
+        insert_bot_message(params["email"], params["bot_id"], summary)
+
 
 def scheduled_major_event_alert():
     for params in get_all_news_agent_params():
@@ -180,11 +209,8 @@ def scheduled_major_event_alert():
             params["user_location"]
         )
         if alert:
-            insert_bot_message(
-                email=params["email"],
-                bot_id=params["bot_id"],
-                message=alert
-            )
+            insert_bot_message(params["email"], params["bot_id"], alert)
+
 
 def send_weather_user_alerts():
     for params in get_all_news_agent_params():
@@ -196,11 +222,8 @@ def send_weather_user_alerts():
             params["user_location"]
         )
         if alert:
-            insert_bot_message(
-                email=params["email"],
-                bot_id=params["bot_id"],
-                message=alert
-            )
+            insert_bot_message(params["email"], params["bot_id"], alert)
+
 
 def send_weather_bot_alerts():
     for params in get_all_news_agent_params():
@@ -212,11 +235,8 @@ def send_weather_bot_alerts():
             params["user_location"]
         )
         if alert:
-            insert_bot_message(
-                email=params["email"],
-                bot_id=params["bot_id"],
-                message=alert
-            )
+            insert_bot_message(params["email"], params["bot_id"], alert)
+
 
 def send_news_user_alerts():
     for params in get_all_news_agent_params():
@@ -228,11 +248,8 @@ def send_news_user_alerts():
             params["user_location"]
         )
         if alert:
-            insert_bot_message(
-                email=params["email"],
-                bot_id=params["bot_id"],
-                message=alert
-            )
+            insert_bot_message(params["email"], params["bot_id"], alert)
+
 
 def start_scheduler():
     scheduler = BackgroundScheduler()
@@ -241,10 +258,11 @@ def start_scheduler():
     scheduler.add_job(send_news_user_alerts, 'cron', hour=19)
     scheduler.start()
 
+
 # --- Startup event handlers ---
 app.add_event_handler("startup", scheduled_weekly_news_summary)
-# app.add_event_handler("startup", scheduled_major_event_alert)
 app.add_event_handler("startup", start_scheduler)
+
 
 # --- Manual trigger endpoints ---
 @app.post("/run_weekly_summary")
@@ -268,12 +286,7 @@ async def run_weather_alerts_user():
             params["bot_city"],
             params["user_location"]
         )
-        if alert:
-            insert_bot_message(
-                email=params["email"],
-                bot_id=params["bot_id"],
-                message=alert
-            )
+        if alert and insert_bot_message(params["email"], params["bot_id"], alert):
             count += 1
     return {"status": f"Weather alerts for users triggered - {count} alerts sent"}
 
@@ -288,12 +301,7 @@ async def run_weather_alerts_bot():
             params["bot_city"],
             params["user_location"]
         )
-        if alert:
-            insert_bot_message(
-                email=params["email"],
-                bot_id=params["bot_id"],
-                message=alert
-            )
+        if alert and insert_bot_message(params["email"], params["bot_id"], alert):
             count += 1
     return {"status": f"Weather alerts for bots triggered - {count} alerts sent"}
 
@@ -308,11 +316,20 @@ async def run_news_alerts_bot():
             params["bot_city"],
             params["user_location"]
         )
-        if alert:
-            insert_bot_message(
-                email=params["email"],
-                bot_id=params["bot_id"],
-                message=alert
-            )
+        if alert and insert_bot_message(params["email"], params["bot_id"], alert):
             count += 1
     return {"status": f"News alerts for bots triggered - {count} alerts sent"}
+
+
+# --- Test deduplication endpoint ---
+@app.post("/test_dedup")
+def test_dedup(
+    email: str = Body(...),
+    bot_id: str = Body(...),
+    bot_response: str = Body(...)
+):
+    inserted = insert_bot_message(email, bot_id, bot_response, platform="api-test")
+    if inserted:
+        return {"status": "success", "message": "Inserted"}
+    else:
+        return {"status": "duplicate", "message": "Skipped duplicate"}
