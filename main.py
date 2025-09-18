@@ -25,6 +25,7 @@ import asyncio
 import random
 import hashlib
 from fastapi.middleware.cors import CORSMiddleware
+import re
 
 # --- Initialize FastAPI app ---
 app = FastAPI()
@@ -192,7 +193,12 @@ def get_all_active_users():
     except Exception as e:
         logging.error(f"Exception in get_all_active_users: {e}")
         return []
-
+def filter_asterisks(text: str) -> str:
+    """Removes asterisks from a string using regex."""
+    if not isinstance(text, str):
+        return text
+    # The pattern r'\*' matches a literal asterisk
+    return re.sub(r'\*', '', text)
 def get_last_proactive_message_time(email, bot_id):
     """
     Get the timestamp of the last proactive message sent to a user-bot pair.
@@ -432,6 +438,7 @@ def insert_user_message(email, bot_id, user_message, bot_response):
     )
 
 # --- Universal Message Logging Wrapper ---
+# --- Universal Message Logging Wrapper ---
 async def log_and_process_chat(request: QuestionRequest, response_func, endpoint_name="unknown"):
     """
     Universal wrapper to ensure all chat interactions are logged to Supabase.
@@ -450,6 +457,13 @@ async def log_and_process_chat(request: QuestionRequest, response_func, endpoint
         print(f"[CHAT_LOGGER] ❌ Error processing request: {e}")
         bot_response = f"Sorry, I encountered an error: {str(e)}"
         result = {"response": bot_response, "error": str(e)}
+
+    # ✅ Apply the asterisk filter to the response
+    bot_response = filter_asterisks(bot_response)
+
+    # ✅ Update the result dictionary with the cleaned response
+    if isinstance(result, dict):
+        result["response"] = bot_response
     
     # Always attempt to log the conversation if email is provided
     if request.email and request.email.strip():
@@ -463,7 +477,7 @@ async def log_and_process_chat(request: QuestionRequest, response_func, endpoint
                 email=request.email,
                 bot_id=request.bot_id,
                 user_message=request.message or "",
-                bot_response=bot_response,
+                bot_response=bot_response, # Logs the cleaned response
                 platform="weather_news",
                 activity_name=activity_name
             )
