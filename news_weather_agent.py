@@ -110,6 +110,7 @@ JSON Response:
 """
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key: return {"category": "other", "location": user_location or "Delhi", "is_temperature_query": False, "location_context": "user"}
+
     
     model = "gemini-2.0-flash"
     llm = GoogleGenAI(model=model, api_key=api_key)
@@ -123,6 +124,7 @@ JSON Response:
     except Exception as e:
         print(f"[ERROR] Failed to analyze user request: {e}")
         return {"category": "other", "location": user_location or "Delhi", "is_temperature_query": False, "location_context": "user"}
+
 
 def extract_bot_location(persona_prompt):
     match = re.search(r'(?:from|in)\s+([A-Za-z\s]+)[\.,]', persona_prompt, re.IGNORECASE)
@@ -165,6 +167,7 @@ def create_persona_weather_response(weather_data: str, persona_prompt: str, user
         
         temperature = match.group(1)
 
+
         llm_prompt = f"""
 Your Persona: {persona_prompt}
 You are talking to your friend, {user_name}, in {language}.
@@ -204,6 +207,7 @@ async def persona_response(user_message, persona_prompt, language, user_name, us
     analysis = await analyze_user_request(user_message, user_location)
     category = analysis.get("category", "other")
     location_from_message = analysis.get("location", user_location or "Delhi")
+
     is_temp_query = analysis.get("is_temperature_query", False)
     
     # ✅ DYNAMIC LOGIC: Get the context directly from the AI's analysis.
