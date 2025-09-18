@@ -51,13 +51,14 @@ class NewsAPITool(BaseTool):
     def _run(self, query: str) -> str:
         api_key = os.environ.get("NEWSAPI_API_KEY")
         if not api_key: return "Error: NEWSAPI_API_KEY not found."
-        context_term = self._get_country_context(query)
-        intelligent_query = f'"{query}"'
-        if query.lower() != context_term.lower():
-            intelligent_query += f' AND "{context_term}"'
         
+        # This intelligent query ensures the location is in the headline for relevance.
+        intelligent_query = f'"{query}"'
         print(f"[NewsAPITool] INFO: Constructed search query: {intelligent_query}")
+        
+        # Use qInTitle for higher relevance
         url = f"https://newsapi.org/v2/everything?qInTitle={intelligent_query}&language=en&sortBy=relevancy&pageSize=5&apiKey={api_key}"
+        
         try:
             response = requests.get(url, timeout=10)
             response.raise_for_status()
@@ -65,8 +66,14 @@ class NewsAPITool(BaseTool):
             articles = data.get("articles", [])
             if not articles:
                 return f"No relevant news found with '{query}' in the headline."
-            formatted_headlines = [f"- {art['title']} (Source: {art['source']['name']})" for art in articles]
-            return "Here are the most relevant headlines:\n" + "\n".join(formatted_headlines)
+            
+            # Extract title and a brief description for better summaries
+            formatted_articles = [
+                f"- Title: {art['title']}\n  Description: {art.get('description', 'No description available.')}" 
+                for art in articles
+            ]
+            return "Here are the most relevant articles:\n" + "\n".join(formatted_articles)
+            
         except Exception as e:
             return f"An unexpected error occurred while fetching news: {e}"
 
@@ -83,7 +90,7 @@ news_researcher = Agent(
 )
 research_task = Task(
     description="Search for the latest news related to {topic}.",
-    expected_output="A bulleted list of top headlines and their sources.",
+    expected_output="A summary of the top articles, including titles and brief descriptions.",
     agent=news_researcher,
 )
 crew = Crew(agents=[news_researcher], tasks=[research_task], process=Process.sequential)
@@ -97,7 +104,7 @@ Analyze the user's message and return a JSON object with three keys: "category",
 
 1.  **category**: Classify the message as "news", "weather", or "other".
 2.  **location**: Extract the main city or country. If no location is mentioned, use the provided default location.
-3.  **is_temperature_query**: Set to `true` if the message specifically asks about temperature, otherwise `false`.
+3.  **is_temperature_query**: Set to `true` if the message specifically asks about temperature, "how hot", or "how cold", otherwise `false`.
 
 User Message: "{user_message}"
 Default Location: "{user_location or 'Hyderabad'}"
@@ -132,11 +139,11 @@ def create_persona_summary(news_summary: str, persona_prompt: str, user_name: st
     llm_prompt = f"""
 Your Persona: {persona_prompt}
 You are talking to your friend, {user_name}, in {language}.
-You just read these news headlines about {location}:
+You just read these news articles about {location}:
 ---
 {news_summary}
 ---
-Synthesize these headlines into a detailed, 3-4 sentence conversational summary. Mention at least two interesting headlines and offer a brief reflection on them from your persona's point of view. End with a natural, engaging question. Do not just list the headlines.
+Synthesize these articles into a detailed, 3-4 sentence conversational summary. Mention at least two interesting developments and offer a brief reflection on them from your persona's point of view. End with a natural, engaging question. Do not just list the headlines.
 """
     api_key = os.environ.get("GEMINI_API_KEY")
     model = "gemini-1.5-flash"
@@ -148,7 +155,7 @@ Synthesize these headlines into a detailed, 3-4 sentence conversational summary.
         print(f"[ERROR] Persona summary generation failed: {e}")
         return "I saw some news, but I'm not sure what to make of it. What do you think?"
 
-# ✅ NEW, UPGRADED FUNCTION
+# ✅ NEW, UPGRADED FUNCTION to provide precise temperature
 def create_persona_weather_response(weather_data: str, persona_prompt: str, user_name: str, location: str, language: str, is_temp_query: bool):
     """
     Generates a high-quality, persona-driven response for weather queries.
@@ -176,18 +183,17 @@ The exact temperature is {temperature}°C.
 Based on your persona, write a brief, 1-2 sentence conversational message.
 You MUST include the exact temperature value '{temperature}°C' in your response. The temperature must be expressed in numbers with its decimal points, not written out as words.
 End with a natural, engaging question.
-
-Example: "I just checked, and it's exactly {temperature}°C in {location} right now. A bit chilly if you ask me! Are you staying warm?"
-
-Your turn:
 """
     else:
         # Task is about general weather.
+        match = re.search(r"weather:\s*(.*)", weather_data)
+        weather_desc = match.group(1).strip() if match else "some interesting weather"
+        
         llm_prompt = f"""
 Your Persona: {persona_prompt}
 You are talking to your friend, {user_name}, in {language}.
-You just saw the weather report for {location}: "{weather_data}"
-Based on your persona, write a brief, 1-2 sentence conversational message about the general weather. Do not just repeat the data. React to it naturally and end with an engaging question.
+You just saw the weather report for {location}: The weather is "{weather_desc}".
+Based on your persona, write a brief, 1-2 sentence conversational message about the weather. Do not just repeat the data. React to it naturally and end with an engaging question.
 """
 
     try:
@@ -200,6 +206,7 @@ Based on your persona, write a brief, 1-2 sentence conversational message about 
              return f"It's {temperature}°C in {location}. Hope you're having a good day!"
         else:
             return f"I was just looking at the weather in {location}. Hope you're having a good day!"
+
 # --- Main Handler ---
 async def persona_response(user_message, persona_prompt, language, user_name, user_location=None):
     start_time = time.time()
@@ -211,34 +218,40 @@ async def persona_response(user_message, persona_prompt, language, user_name, us
     is_temp_query = analysis.get("is_temperature_query", False)
 
     bot_location = extract_bot_location(persona_prompt)
-    context = 'bot' if any(keyword in user_message.lower() for keyword in ['your city', 'your place']) else 'user'
+    context = 'bot' if any(keyword in user_message.lower() for keyword in ['your city', 'your place', 'where you are']) else 'user'
     
     response = "I can chat about recent news or the current weather. What's on your mind?"
 
     if category == "news":
-        news_location = location if context == "user" else bot_location
+        news_location = bot_location if context == "bot" else location
         if news_location:
             result = crew.kickoff(inputs={'topic': news_location})
             response = create_persona_summary(str(result), persona_prompt, user_name, news_location, language)
+        else:
+            response = "I'm not sure which location you're asking about. Could you be more specific?"
 
     elif category == "weather":
-        weather_location = location if context == "user" else bot_location
+        weather_location = bot_location if context == "bot" else location
         if weather_location:
             result = open_weather_map_tool._run(city_name=weather_location)
-            response = create_persona_weather_response(result, persona_prompt, user_name, weather_location, language, is_temp_query)
+            if "Error:" in result:
+                response = f"I'm sorry, I couldn't seem to get the weather for {weather_location}. Maybe try a nearby major city?"
+            else:
+                response = create_persona_weather_response(result, persona_prompt, user_name, weather_location, language, is_temp_query)
+        else:
+            response = "I'm not sure which location you're asking about for the weather."
             
     end_time = time.time()
     print(f"[DEBUG] Final response generated in {end_time - start_time:.2f} seconds: {response}")
     return response
 
-# --- Alerting and Summary Functions ---
+# --- Alerting and Summary Functions (Kept for proactive alerts) ---
 def is_interesting_weather(weather_text):
     keywords = [
         "storm", "thunderstorm", "heavy rain", "downpour", "flooding", "hailstorm",
         "heat wave", "cold wave", "freezing", "snow", "blizzard", "cyclone", "hurricane",
         "tornado", "extreme", "severe", "warning", "alert", "advisory", "dangerous",
-        "record high", "record low", "unusual", "unprecedented", "fog", "smog",
-        "very hot", "very cold", "scorching", "chilly", "humid"
+        "fog", "smog"
     ]
     pattern = r"|".join([re.escape(word) for word in keywords])
     return re.search(pattern, weather_text, re.IGNORECASE) is not None
@@ -247,18 +260,17 @@ def is_major_event(news_text):
     keywords = [
         "election", "government collapse", "cabinet reshuffle",
         "inflation", "stock market crash", "economic crisis", "policy change", "sanctions",
-        "war", "protest", "strike", "currency devaluation", "interest rate hike", "recession",
-        "earthquake", "flood", "protest", "accident", "crime", "strike",
-        "curfew", "violence", "celebration", "shutdown", "alert", "breaking", "death", "murder", "investigation"
+        "war", "protest", "strike", "recession",
+        "earthquake", "flood", "accident", "crime",
+        "curfew", "violence", "shutdown", "alert", "breaking", "death", "murder", "investigation"
     ]
     pattern = r"|".join([re.escape(word) for word in keywords])
     return re.search(pattern, news_text, re.IGNORECASE) is not None
 
-def generate_weekly_news_summary(persona_prompt, user_name, language,bot_location, user_location = "India"):
+def generate_weekly_news_summary(persona_prompt, user_name, language, bot_location, user_location="India"):
     topic = f"Latest National news in {user_location} this week"
     result = crew.kickoff(inputs={'topic': topic})
     news_summary = str(result)
-    # The create_persona_summary function is better for this
     response = create_persona_summary(news_summary, persona_prompt, user_name, user_location, language)
     return response
 
@@ -266,12 +278,10 @@ def check_and_alert_for_weather_user(persona_prompt, user_name, language, bot_lo
     try:
         weather_summary = open_weather_map_tool._run(city_name=user_location)
         if is_interesting_weather(weather_summary):
-            context = "user" if user_location != bot_location else "bot"
-            response = get_weather_response(weather_summary, persona_prompt, user_name, language, bot_location, user_location, context)
+            # For alerts, we don't need a specific temperature query
+            response = create_persona_weather_response(weather_summary, persona_prompt, user_name, user_location, language, is_temp_query=False)
             return response
-        else:
-            print(f"No interesting weather conditions for {user_location}.")
-            return None
+        return None
     except Exception as e:
         print(f"Error in weather alert for user location: {e}")
         return None
@@ -280,11 +290,9 @@ def check_and_alert_for_weather_bot(persona_prompt, user_name, language, bot_loc
     try:
         weather_summary = open_weather_map_tool._run(city_name=bot_location)
         if is_interesting_weather(weather_summary):
-            response = get_weather_response(weather_summary, persona_prompt, user_name, language, bot_location, user_location, "bot")
+            response = create_persona_weather_response(weather_summary, persona_prompt, user_name, bot_location, language, is_temp_query=False)
             return response
-        else:
-            print(f"No interesting weather conditions for {bot_location}.")
-            return None
+        return None
     except Exception as e:
         print(f"Error in weather alert for bot location: {e}")
         return None
@@ -297,9 +305,7 @@ def check_and_alert_for_major_events_user(persona_prompt, user_name, language, b
         if is_major_event(news_summary):
             response = create_persona_summary(news_summary, persona_prompt, user_name, user_location, language)
             return response
-        else:
-            print(f"No major political/economic/tragic event detected for {user_location}.")
-            return None
+        return None
     except Exception as e:
         print(f"Error in news alert for user location: {e}")
         return None
@@ -312,12 +318,11 @@ def check_and_alert_for_major_events_bot(persona_prompt, user_name, language, bo
         if is_major_event(news_summary):
             response = create_persona_summary(news_summary, persona_prompt, user_name, bot_location, language)
             return response
-        else:
-            print(f"No major political/economic/tragic event detected for {bot_location}.")
-            return None
+        return None
     except Exception as e:
         print(f"Error in news alert for bot location: {e}")
         return None
 
+# Legacy function for backward compatibility
 def check_and_alert_for_major_events(persona_prompt, user_name, language, bot_location, user_location="India"):
     return check_and_alert_for_major_events_user(persona_prompt, user_name, language, bot_location, user_location)
