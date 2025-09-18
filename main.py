@@ -26,6 +26,19 @@ import random
 import hashlib
 from fastapi.middleware.cors import CORSMiddleware
 
+# --- Import new message logging system ---
+from message_logging_system import (
+    RedisManager, 
+    RabbitMQManager, 
+    SupabaseManager,
+    log_and_publish_chat,
+    get_redis_manager,
+    get_rabbitmq_manager,
+    get_supabase_manager,
+    cleanup_connections,
+    validate_environment
+)
+
 # --- Initialize FastAPI app ---
 app = FastAPI()
 
@@ -478,61 +491,116 @@ def insert_user_message(email, bot_id, user_message, bot_response):
         activity_name=activity_name
     )
 
-# --- Universal Message Logging Wrapper ---
+# --- Enhanced Message Logging with Redis, RabbitMQ, and Supabase ---
 async def log_and_process_chat(request: QuestionRequest, response_func, endpoint_name="unknown"):
     """
-    Universal wrapper to ensure all chat interactions are logged to Supabase.
-    This function wraps any chat processing function to guarantee message logging.
+    Enhanced universal wrapper that logs to Redis, RabbitMQ, and Supabase.
+    This function wraps any chat processing function to guarantee comprehensive message logging.
     """
-    print(f"[CHAT_LOGGER] 🚀 Processing {endpoint_name} request from {request.email or 'NO EMAIL'}")
-    print(f"[CHAT_LOGGER] 📨 Message: {request.message or 'NO MESSAGE'}")
-    print(f"[CHAT_LOGGER] 🤖 Bot ID: {request.bot_id}")
-    print(f"[CHAT_LOGGER] 👤 User: {request.user_name}")
+    print(f"[ENHANCED_LOGGER] 🚀 Processing {endpoint_name} request from {request.email or 'NO EMAIL'}")
+    print(f"[ENHANCED_LOGGER] 📨 Message: {request.message or 'NO MESSAGE'}")
+    print(f"[ENHANCED_LOGGER] 🤖 Bot ID: {request.bot_id}")
+    print(f"[ENHANCED_LOGGER] 👤 User: {request.user_name}")
     
     # Process the request using the provided function
     try:
         result = await response_func(request)
         bot_response = result.get("response", "") if isinstance(result, dict) else str(result)
     except Exception as e:
-        print(f"[CHAT_LOGGER] ❌ Error processing request: {e}")
+        print(f"[ENHANCED_LOGGER] ❌ Error processing request: {e}")
         bot_response = f"Sorry, I encountered an error: {str(e)}"
         result = {"response": bot_response, "error": str(e)}
     
-    # Always attempt to log the conversation if email is provided
+    # Enhanced logging with Redis, RabbitMQ, and Supabase
     if request.email and request.email.strip():
-        print(f"[CHAT_LOGGER] ✅ Email provided: {request.email} - will save to Supabase")
+        print(f"[ENHANCED_LOGGER] ✅ Email provided: {request.email} - will save to Redis, RabbitMQ, and Supabase")
         try:
+            # Create user_id in the required format
+            user_id = f"{request.email}:{request.bot_id}"
+            
             # Determine activity type based on user message
             activity_name = determine_activity_type(request.message)
-            print(f"[CHAT_LOGGER] DEBUG: Determined activity_name: {activity_name}")
+            print(f"[ENHANCED_LOGGER] DEBUG: Determined activity_name: {activity_name}")
             
-            storage_success = log_activity_message_to_supabase(
-                email=request.email,
+            # Use the new comprehensive logging system
+            redis_manager = get_redis_manager()
+            logging_result = await log_and_publish_chat(
+                redis_manager=redis_manager,
+                user_id=user_id,
+                user_input=request.message or "",
+                bot_reply=bot_response,
                 bot_id=request.bot_id,
-                user_message=request.message or "",
-                bot_response=bot_response,
+                email=request.email,
                 platform="weather_news",
-                activity_name=activity_name
+                requested_time=request.request_time or None
             )
-            if storage_success:
-                print(f"[CHAT_LOGGER] ✅ Conversation successfully saved to Supabase for {request.email}")
-                print(f"[CHAT_LOGGER] ✅ Activity type: {activity_name}")
-                print(f"[CHAT_LOGGER] ✅ Endpoint: {endpoint_name}")
+            
+            # Log the results
+            if logging_result["success"]:
+                print(f"[ENHANCED_LOGGER] ✅ Comprehensive logging successful for {request.email}")
+                print(f"[ENHANCED_LOGGER] ✅ Redis: {logging_result['redis_stored']}")
+                print(f"[ENHANCED_LOGGER] ✅ RabbitMQ: {logging_result['rabbitmq_published']}")
+                print(f"[ENHANCED_LOGGER] ✅ Supabase: {logging_result['supabase_stored']}")
             else:
-                print(f"[CHAT_LOGGER] ❌ Failed to save conversation to Supabase for {request.email}")
+                print(f"[ENHANCED_LOGGER] ❌ Comprehensive logging failed for {request.email}")
+                if logging_result["errors"]:
+                    for error in logging_result["errors"]:
+                        print(f"[ENHANCED_LOGGER] ❌ Error: {error}")
+            
+            # Fallback to legacy Supabase logging if new system fails
+            if not logging_result["supabase_stored"]:
+                print(f"[ENHANCED_LOGGER] 🔄 Attempting fallback to legacy Supabase logging...")
+                try:
+                    storage_success = log_activity_message_to_supabase(
+                        email=request.email,
+                        bot_id=request.bot_id,
+                        user_message=request.message or "",
+                        bot_response=bot_response,
+                        platform="weather_news",
+                        activity_name=activity_name
+                    )
+                    if storage_success:
+                        print(f"[ENHANCED_LOGGER] ✅ Fallback Supabase logging successful")
+                    else:
+                        print(f"[ENHANCED_LOGGER] ❌ Fallback Supabase logging failed")
+                except Exception as e:
+                    print(f"[ENHANCED_LOGGER] ❌ Fallback logging failed: {e}")
+            
         except Exception as e:
-            print(f"[CHAT_LOGGER] ❌ Exception while saving conversation: {e}")
+            print(f"[ENHANCED_LOGGER] ❌ Exception in enhanced logging: {e}")
             import traceback
-            print(f"[CHAT_LOGGER] ❌ Full traceback: {traceback.format_exc()}")
-            logging.error(f"Failed to save conversation for {request.email}: {e}")
+            print(f"[ENHANCED_LOGGER] ❌ Full traceback: {traceback.format_exc()}")
+            
+            # Fallback to legacy logging
+            try:
+                activity_name = determine_activity_type(request.message)
+                storage_success = log_activity_message_to_supabase(
+                    email=request.email,
+                    bot_id=request.bot_id,
+                    user_message=request.message or "",
+                    bot_response=bot_response,
+                    platform="weather_news",
+                    activity_name=activity_name
+                )
+                if storage_success:
+                    print(f"[ENHANCED_LOGGER] ✅ Fallback to legacy logging successful")
+                else:
+                    print(f"[ENHANCED_LOGGER] ❌ Fallback to legacy logging failed")
+            except Exception as fallback_error:
+                print(f"[ENHANCED_LOGGER] ❌ Fallback logging also failed: {fallback_error}")
+                logging.error(f"All logging methods failed for {request.email}: {e}")
     else:
-        print(f"[CHAT_LOGGER] ⚠️  WARNING: No email provided, conversation NOT saved to database")
-        print(f"[CHAT_LOGGER] ⚠️  To save conversations, include 'email' field in your request")
+        print(f"[ENHANCED_LOGGER] ⚠️  WARNING: No email provided, conversation NOT saved to any database")
+        print(f"[ENHANCED_LOGGER] ⚠️  To save conversations, include 'email' field in your request")
     
-    # Add logging status to result
+    # Add enhanced logging status to result
     if isinstance(result, dict):
-        result["logged_to_supabase"] = bool(request.email and request.email.strip())
-        result["endpoint"] = endpoint_name
+        result["enhanced_logging"] = {
+            "redis_available": bool(request.email and request.email.strip()),
+            "rabbitmq_available": bool(request.email and request.email.strip()),
+            "supabase_available": bool(request.email and request.email.strip()),
+            "endpoint": endpoint_name
+        }
     
     return result
 
@@ -893,12 +961,12 @@ def send_proactive_general_updates():
 def start_scheduler():
     scheduler = BackgroundScheduler()
     
-    # Existing alert jobs (daily at specific times)
-    scheduler.add_job(send_weather_user_alerts, 'cron', hour=8)
-    scheduler.add_job(send_weather_bot_alerts, 'cron', hour=14)
-    scheduler.add_job(send_news_user_alerts, 'cron', hour=19)
+    # DISABLED: Daily alert jobs (these were causing multiple messages per day)
+    # scheduler.add_job(send_weather_user_alerts, 'cron', hour=8)
+    # scheduler.add_job(send_weather_bot_alerts, 'cron', hour=14)
+    # scheduler.add_job(send_news_user_alerts, 'cron', hour=19)
     
-    # New proactive messaging jobs (every 3 days)
+    # Proactive messaging jobs (every 3 days only)
     # Combined proactive updates at 10 AM every 3 days (alternates between weather and news)
     scheduler.add_job(send_proactive_weather_updates, 'cron', hour=10, day='*/3')
     scheduler.add_job(send_proactive_news_updates, 'cron', hour=10, day='*/3')
@@ -906,12 +974,85 @@ def start_scheduler():
     scheduler.add_job(send_proactive_general_updates, 'cron', hour=18, day='*/3')
     
     scheduler.start()
-    print("[SCHEDULER] Proactive messaging scheduler started with 3-day intervals and alternating weather/news updates")
+    print("[SCHEDULER] Proactive messaging scheduler started with 3-day intervals only (daily alerts disabled)")
 
 # --- Startup event handlers ---
 app.add_event_handler("startup", scheduled_weekly_news_summary)
 # app.add_event_handler("startup", scheduled_major_event_alert)
 app.add_event_handler("startup", start_scheduler)
+
+# --- Enhanced Logging System Startup ---
+@app.on_event("startup")
+async def startup_logging_system():
+    """Initialize the enhanced logging system on startup"""
+    try:
+        print("[STARTUP] 🚀 Initializing enhanced logging system...")
+        
+        # Test environment configuration
+        try:
+            validate_environment()
+            print("[STARTUP] ✅ Environment variables validated")
+        except ValueError as e:
+            print(f"[STARTUP] ⚠️  Environment validation failed: {e}")
+            print("[STARTUP] ⚠️  Some logging features may not work correctly")
+        
+        # Test individual connections
+        connection_results = {"redis": False, "rabbitmq": False, "supabase": False, "errors": []}
+        
+        # Test Redis
+        try:
+            redis_manager = get_redis_manager()
+            redis_manager._ensure_connection()
+            connection_results["redis"] = True
+            print("[STARTUP] ✅ Redis: Connected")
+        except Exception as e:
+            connection_results["errors"].append(f"Redis connection failed: {e}")
+            print(f"[STARTUP] ❌ Redis: Failed - {e}")
+        
+        # Test RabbitMQ
+        try:
+            rabbitmq_manager = get_rabbitmq_manager()
+            rabbitmq_manager._ensure_connection()
+            connection_results["rabbitmq"] = True
+            print("[STARTUP] ✅ RabbitMQ: Connected")
+        except Exception as e:
+            connection_results["errors"].append(f"RabbitMQ connection failed: {e}")
+            print(f"[STARTUP] ❌ RabbitMQ: Failed - {e}")
+        
+        # Test Supabase
+        try:
+            supabase_manager = get_supabase_manager()
+            connection_results["supabase"] = True
+            print("[STARTUP] ✅ Supabase: Connected")
+        except Exception as e:
+            connection_results["errors"].append(f"Supabase connection failed: {e}")
+            print(f"[STARTUP] ❌ Supabase: Failed - {e}")
+        
+        if all([connection_results["redis"], connection_results["rabbitmq"], connection_results["supabase"]]):
+            print("[STARTUP] ✅ All logging systems (Redis, RabbitMQ, Supabase) are operational")
+        else:
+            print("[STARTUP] ⚠️  Some logging systems are not operational")
+            if connection_results["errors"]:
+                print("[STARTUP] Errors:")
+                for error in connection_results["errors"]:
+                    print(f"[STARTUP] ❌ {error}")
+        
+        print("[STARTUP] 🎯 Enhanced logging system initialization complete")
+        
+    except Exception as e:
+        print(f"[STARTUP] ❌ Failed to initialize enhanced logging system: {e}")
+        import traceback
+        print(f"[STARTUP] ❌ Full traceback: {traceback.format_exc()}")
+
+@app.on_event("shutdown")
+async def shutdown_logging_system():
+    """Clean up logging system connections on shutdown"""
+    try:
+        print("[SHUTDOWN] 🧹 Cleaning up logging system connections...")
+        cleanup_connections()
+        print("[SHUTDOWN] ✅ Logging system cleanup complete")
+    except Exception as e:
+        print(f"[SHUTDOWN] ❌ Error during cleanup: {e}")
 
 # --- Manual trigger endpoints ---
 @app.post("/run_weekly_summary")
@@ -1161,3 +1302,213 @@ async def test_message_logging(request: QuestionRequest):
     }
     
     return result
+
+# --- Enhanced Logging System Test Endpoints ---
+@app.post("/test_enhanced_logging")
+async def test_enhanced_logging(request: QuestionRequest):
+    """Test endpoint for the new Redis + RabbitMQ + Supabase logging system"""
+    print(f"[ENHANCED_LOGGING_TEST] 🧪 Testing enhanced logging for {request.email or 'NO EMAIL'}")
+    
+    # Create a test response
+    test_response = f"Enhanced logging test successful! Your message '{request.message}' will be logged to Redis, RabbitMQ, and Supabase."
+    
+    # Use the enhanced logging wrapper
+    async def test_logic(req):
+        return {
+            "response": test_response,
+            "user_name": req.user_name,
+            "language": req.language,
+            "test_type": "enhanced_logging_verification"
+        }
+    
+    result = await log_and_process_chat(request, test_logic, "test_enhanced_logging")
+    
+    # Add enhanced test information
+    result["enhanced_logging_test"] = {
+        "email_provided": bool(request.email and request.email.strip()),
+        "message_length": len(request.message or ""),
+        "bot_id": request.bot_id,
+        "timestamp": datetime.utcnow().isoformat(),
+        "systems_tested": ["Redis", "RabbitMQ", "Supabase"]
+    }
+    
+    return result
+
+@app.get("/logging_system_status")
+async def get_logging_system_status():
+    """Get the status of all logging systems (Redis, RabbitMQ, Supabase)"""
+    try:
+        # Test environment configuration
+        try:
+            validate_environment()
+            env_status = "valid"
+        except ValueError as e:
+            env_status = f"invalid: {str(e)}"
+        
+        # Test individual connections
+        connection_results = {"redis": False, "rabbitmq": False, "supabase": False, "errors": []}
+        
+        # Test Redis
+        try:
+            redis_manager = get_redis_manager()
+            redis_manager._ensure_connection()
+            connection_results["redis"] = True
+        except Exception as e:
+            connection_results["errors"].append(f"Redis connection failed: {e}")
+        
+        # Test RabbitMQ
+        try:
+            rabbitmq_manager = get_rabbitmq_manager()
+            rabbitmq_manager._ensure_connection()
+            connection_results["rabbitmq"] = True
+        except Exception as e:
+            connection_results["errors"].append(f"RabbitMQ connection failed: {e}")
+        
+        # Test Supabase
+        try:
+            supabase_manager = get_supabase_manager()
+            connection_results["supabase"] = True
+        except Exception as e:
+            connection_results["errors"].append(f"Supabase connection failed: {e}")
+        
+        return {
+            "status": "success",
+            "environment_config": {
+                "redis_url_configured": bool(os.getenv("REDIS_URL")),
+                "rabbitmq_url_configured": bool(os.getenv("RABBITMQ_URL")),
+                "supabase_url_configured": bool(os.getenv("SUPABASE_URL")),
+                "supabase_key_configured": bool(os.getenv("SUPABASE_KEY")),
+                "validation_status": env_status
+            },
+            "connection_status": connection_results,
+            "system_health": {
+                "redis": connection_results["redis"],
+                "rabbitmq": connection_results["rabbitmq"],
+                "supabase": connection_results["supabase"]
+            },
+            "recommendations": [
+                "Ensure all environment variables are set correctly in .env file",
+                "Check that Redis server is running and accessible",
+                "Check that RabbitMQ server is running and accessible", 
+                "Verify Supabase credentials and network connectivity"
+            ] if not all([connection_results["redis"], connection_results["rabbitmq"], connection_results["supabase"]]) else ["All systems operational"]
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Failed to check logging system status: {str(e)}",
+            "recommendations": [
+                "Check environment variable configuration in .env file",
+                "Verify all service connections",
+                "Review error logs for specific issues"
+            ]
+        }
+
+@app.get("/redis_status")
+async def get_redis_status():
+    """Get Redis connection and data status"""
+    try:
+        redis_manager = get_redis_manager()
+        
+        # Test basic operations
+        test_key = "test:connection"
+        test_data = {"test": "data", "timestamp": datetime.utcnow().isoformat()}
+        
+        # Store test data
+        store_success = redis_manager.store_user_data(test_key, test_data, ttl=60)
+        
+        # Retrieve test data
+        retrieved_data = redis_manager.get_user_data(test_key)
+        
+        # Clean up test data
+        redis_manager.clear_user_data(test_key)
+        
+        return {
+            "status": "success",
+            "connection": "active",
+            "test_operations": {
+                "store": store_success,
+                "retrieve": retrieved_data is not None,
+                "data_match": retrieved_data == test_data if retrieved_data else False
+            },
+            "redis_url": redis_manager.redis_url[:20] + "..." if redis_manager.redis_url else "Not configured"
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Redis connection failed: {str(e)}",
+            "recommendations": [
+                "Check Redis server is running",
+                "Verify REDIS_URL environment variable",
+                "Check network connectivity to Redis server"
+            ]
+        }
+
+@app.get("/rabbitmq_status")
+async def get_rabbitmq_status():
+    """Get RabbitMQ connection status"""
+    try:
+        rabbitmq_manager = get_rabbitmq_manager()
+        
+        # Test connection
+        rabbitmq_manager._ensure_connection()
+        
+        return {
+            "status": "success",
+            "connection": "active",
+            "rabbitmq_url": rabbitmq_manager.rabbitmq_url[:20] + "..." if rabbitmq_manager.rabbitmq_url else "Not configured",
+            "queues_configured": ["message_storage", "message_processing"]
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"RabbitMQ connection failed: {str(e)}",
+            "recommendations": [
+                "Check RabbitMQ server is running",
+                "Verify RABBITMQ_URL environment variable",
+                "Check network connectivity to RabbitMQ server"
+            ]
+        }
+
+@app.get("/supabase_status")
+async def get_supabase_status():
+    """Get Supabase connection status"""
+    try:
+        supabase_manager = get_supabase_manager()
+        
+        # Test connection by trying to read from the table
+        response = supabase_manager.supabase_client.table("message_paritition").select("id").limit(1).execute()
+        
+        return {
+            "status": "success",
+            "connection": "active",
+            "supabase_url": supabase_manager.supabase_url[:20] + "..." if supabase_manager.supabase_url else "Not configured",
+            "data_count": len(response.data) if response.data else 0,
+            "table_accessible": True
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Supabase connection failed: {str(e)}",
+            "recommendations": [
+                "Check Supabase credentials",
+                "Verify SUPABASE_URL and SUPABASE_KEY environment variables",
+                "Check network connectivity to Supabase",
+                "Verify table permissions"
+            ]
+        }
+
+@app.post("/cleanup_connections")
+async def cleanup_logging_connections():
+    """Clean up all logging system connections"""
+    try:
+        cleanup_connections()
+        return {
+            "status": "success",
+            "message": "All logging system connections cleaned up successfully"
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Failed to cleanup connections: {str(e)}"
+        }
