@@ -80,7 +80,7 @@ class NewsAPITool(BaseTool):
 # --- Initialize Tools & Crew ---
 open_weather_map_tool = OpenWeatherMapTool()
 news_api_tool = NewsAPITool()
-llm = 'gemini/gemini-1.5-flash'
+llm = 'gemini/gemini-2.0-flash'
 
 news_researcher = Agent(
     role='Expert News Reporter',
@@ -107,14 +107,14 @@ Analyze the user's message and return a JSON object with three keys: "category",
 3.  **is_temperature_query**: Set to `true` if the message specifically asks about temperature, "how hot", or "how cold", otherwise `false`.
 
 User Message: "{user_message}"
-Default Location: "{user_location or 'Hyderabad'}"
+Default Location: "{user_location or 'Delhi'}"
 
 JSON Response:
 """
     api_key = os.environ.get("GEMINI_API_KEY")
-    if not api_key: return {"category": "other", "location": user_location or "Hyderabad", "is_temperature_query": False}
+    if not api_key: return {"category": "other", "location": user_location or "Delhi", "is_temperature_query": False}
     
-    model = "gemini-1.5-flash"
+    model = "gemini-2.0-flash"
     llm = GoogleGenAI(model=model, api_key=api_key)
     
     try:
@@ -126,7 +126,7 @@ JSON Response:
         return analysis
     except Exception as e:
         print(f"[ERROR] Failed to analyze user request: {e}")
-        return {"category": "other", "location": user_location or "Hyderabad", "is_temperature_query": False}
+        return {"category": "other", "location": user_location or "Delhi", "is_temperature_query": False}
 
 def extract_bot_location(persona_prompt):
     match = re.search(r'(?:from|in)\s+([A-Za-z\s]+)[\.,]', persona_prompt, re.IGNORECASE)
@@ -146,7 +146,7 @@ You just read these news articles about {location}:
 Synthesize these articles into a detailed, 3-4 sentence conversational summary. Mention at least two interesting developments and offer a brief reflection on them from your persona's point of view. End with a natural, engaging question. Do not just list the headlines.
 """
     api_key = os.environ.get("GEMINI_API_KEY")
-    model = "gemini-1.5-flash"
+    model = "gemini-2.0-flash"
     llm = GoogleGenAI(model=model, api_key=api_key)
     try:
         response = llm.complete(llm_prompt)
@@ -162,7 +162,7 @@ def create_persona_weather_response(weather_data: str, persona_prompt: str, user
     It handles general weather and specific temperature requests differently.
     """
     api_key = os.environ.get("GEMINI_API_KEY")
-    model = "gemini-1.5-flash"
+    model = "gemini-2.0-flash"
     llm = GoogleGenAI(model=model, api_key=api_key)
 
     if is_temp_query:
@@ -171,7 +171,7 @@ def create_persona_weather_response(weather_data: str, persona_prompt: str, user
         if not match:
             return f"I'm sorry, I couldn't find the exact temperature for {location} right now."
         
-        temperature = match.group(1) # e.g., "21.58"
+        temperature = match.group(1) # e.g., "22.08"
 
         llm_prompt = f"""
 Your Persona: {persona_prompt}
@@ -214,7 +214,7 @@ async def persona_response(user_message, persona_prompt, language, user_name, us
     # Step 1: Analyze the request in a single, fast call
     analysis = await analyze_user_request(user_message, user_location)
     category = analysis.get("category", "other")
-    location = analysis.get("location", user_location or "Hyderabad")
+    location = analysis.get("location", user_location or "Delhi")
     is_temp_query = analysis.get("is_temperature_query", False)
 
     bot_location = extract_bot_location(persona_prompt)
