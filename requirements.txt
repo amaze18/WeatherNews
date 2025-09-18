@@ -9,3 +9,6 @@ gunicorn
 fastapi_utils
 supabase
 apscheduler
+redis
+pika
+asyncio-redis

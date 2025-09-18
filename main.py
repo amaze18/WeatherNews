@@ -26,6 +26,19 @@ import random
 import hashlib
 from fastapi.middleware.cors import CORSMiddleware
 
+# --- Import new message logging system ---
+from message_logging_system import (
+    RedisManager, 
+    RabbitMQManager, 
+    SupabaseManager,
+    log_and_publish_chat,
+    get_redis_manager,
+    get_rabbitmq_manager,
+    get_supabase_manager,
+    cleanup_connections,
+    validate_environment
+)
+
 # --- Initialize FastAPI app ---
 app = FastAPI()
 
@@ -193,6 +206,37 @@ def get_all_active_users():
         logging.error(f"Exception in get_all_active_users: {e}")
         return []
 
+def get_user_bot_friendship_time(email, bot_id):
+    """
+    Get the timestamp when a user first added the bot as a friend (first interaction).
+    Returns None if no interaction has been recorded.
+    """
+    try:
+        if supabase is None:
+            print(f"[SUPABASE] ❌ ERROR: Supabase client is not initialized in get_user_bot_friendship_time!")
+            return None
+            
+        # Look for the first interaction between user and bot
+        response = supabase.table("message_paritition") \
+            .select("created_at") \
+            .eq("email", email) \
+            .eq("bot_id", bot_id) \
+            .order("created_at", desc=False) \
+            .limit(1) \
+            .execute()
+        
+        if response.data and len(response.data) > 0:
+            friendship_time = response.data[0]["created_at"]
+            print(f"[PROACTIVE] User {email} added bot {bot_id} as friend at: {friendship_time}")
+            return friendship_time
+        else:
+            print(f"[PROACTIVE] No friendship record found for {email}/{bot_id}")
+            return None
+            
+    except Exception as e:
+        logging.error(f"Exception in get_user_bot_friendship_time for {email}/{bot_id}: {e}")
+        return None
+
 def get_last_proactive_message_time(email, bot_id):
     """
     Get the timestamp of the last proactive message sent to a user-bot pair.
@@ -227,31 +271,47 @@ def get_last_proactive_message_time(email, bot_id):
 
 def should_send_proactive_message(email, bot_id, days_interval=3):
     """
-    Check if enough time has passed since the last proactive message to send a new one.
-    Returns True if it's time to send a proactive message.
+    Check if it's time to send a proactive message based on friendship time and last message time.
+    Logic:
+    1. If no previous proactive message: Check if 3+ days have passed since friendship
+    2. If previous proactive message exists: Check if 3+ days have passed since last message
     """
     try:
+        # Get when user first added the bot as friend
+        friendship_time = get_user_bot_friendship_time(email, bot_id)
+        if friendship_time is None:
+            print(f"[PROACTIVE] No friendship record for {email}/{bot_id}, skipping")
+            return False
+        
+        # Get last proactive message time
         last_message_time = get_last_proactive_message_time(email, bot_id)
         
-        if last_message_time is None:
-            # No previous proactive message, so it's time to send one
-            print(f"[PROACTIVE] No previous proactive message for {email}/{bot_id}, will send first message")
-            return True
-        
-        # Parse the timestamp and check if enough days have passed
-        from datetime import datetime
-        last_time = datetime.fromisoformat(last_message_time.replace('Z', '+00:00'))
         current_time = datetime.now(timezone.utc)
-        time_diff = current_time - last_time
         
-        days_passed = time_diff.days + (time_diff.seconds / 86400)  # Include fractional days
-        
-        if days_passed >= days_interval:
-            print(f"[PROACTIVE] {days_passed:.1f} days passed since last proactive message for {email}/{bot_id}, will send new message")
-            return True
+        if last_message_time is None:
+            # No previous proactive message - check if 3+ days have passed since friendship
+            friendship_datetime = datetime.fromisoformat(friendship_time.replace('Z', '+00:00'))
+            time_since_friendship = current_time - friendship_datetime
+            days_since_friendship = time_since_friendship.days + (time_since_friendship.seconds / 86400)
+            
+            if days_since_friendship >= days_interval:
+                print(f"[PROACTIVE] {days_since_friendship:.1f} days since friendship for {email}/{bot_id}, will send first proactive message")
+                return True
+            else:
+                print(f"[PROACTIVE] Only {days_since_friendship:.1f} days since friendship for {email}/{bot_id}, waiting for 3 days")
+                return False
         else:
-            print(f"[PROACTIVE] Only {days_passed:.1f} days passed since last proactive message for {email}/{bot_id}, skipping")
-            return False
+            # Previous proactive message exists - check if 3+ days have passed since last message
+            last_time = datetime.fromisoformat(last_message_time.replace('Z', '+00:00'))
+            time_since_last_message = current_time - last_time
+            days_since_last_message = time_since_last_message.days + (time_since_last_message.seconds / 86400)
+            
+            if days_since_last_message >= days_interval:
+                print(f"[PROACTIVE] {days_since_last_message:.1f} days since last proactive message for {email}/{bot_id}, will send new message")
+                return True
+            else:
+                print(f"[PROACTIVE] Only {days_since_last_message:.1f} days since last proactive message for {email}/{bot_id}, skipping")
+                return False
             
     except Exception as e:
         logging.error(f"Exception in should_send_proactive_message for {email}/{bot_id}: {e}")
@@ -431,61 +491,116 @@ def insert_user_message(email, bot_id, user_message, bot_response):
         activity_name=activity_name
     )
 
-# --- Universal Message Logging Wrapper ---
+# --- Enhanced Message Logging with Redis, RabbitMQ, and Supabase ---
 async def log_and_process_chat(request: QuestionRequest, response_func, endpoint_name="unknown"):
     """
-    Universal wrapper to ensure all chat interactions are logged to Supabase.
-    This function wraps any chat processing function to guarantee message logging.
+    Enhanced universal wrapper that logs to Redis, RabbitMQ, and Supabase.
+    This function wraps any chat processing function to guarantee comprehensive message logging.
     """
-    print(f"[CHAT_LOGGER] 🚀 Processing {endpoint_name} request from {request.email or 'NO EMAIL'}")
-    print(f"[CHAT_LOGGER] 📨 Message: {request.message or 'NO MESSAGE'}")
-    print(f"[CHAT_LOGGER] 🤖 Bot ID: {request.bot_id}")
-    print(f"[CHAT_LOGGER] 👤 User: {request.user_name}")
+    print(f"[ENHANCED_LOGGER] 🚀 Processing {endpoint_name} request from {request.email or 'NO EMAIL'}")
+    print(f"[ENHANCED_LOGGER] 📨 Message: {request.message or 'NO MESSAGE'}")
+    print(f"[ENHANCED_LOGGER] 🤖 Bot ID: {request.bot_id}")
+    print(f"[ENHANCED_LOGGER] 👤 User: {request.user_name}")
     
     # Process the request using the provided function
     try:
         result = await response_func(request)
         bot_response = result.get("response", "") if isinstance(result, dict) else str(result)
     except Exception as e:
-        print(f"[CHAT_LOGGER] ❌ Error processing request: {e}")
+        print(f"[ENHANCED_LOGGER] ❌ Error processing request: {e}")
         bot_response = f"Sorry, I encountered an error: {str(e)}"
         result = {"response": bot_response, "error": str(e)}
     
-    # Always attempt to log the conversation if email is provided
+    # Enhanced logging with Redis, RabbitMQ, and Supabase
     if request.email and request.email.strip():
-        print(f"[CHAT_LOGGER] ✅ Email provided: {request.email} - will save to Supabase")
+        print(f"[ENHANCED_LOGGER] ✅ Email provided: {request.email} - will save to Redis, RabbitMQ, and Supabase")
         try:
+            # Create user_id in the required format
+            user_id = f"{request.email}:{request.bot_id}"
+            
             # Determine activity type based on user message
             activity_name = determine_activity_type(request.message)
-            print(f"[CHAT_LOGGER] DEBUG: Determined activity_name: {activity_name}")
+            print(f"[ENHANCED_LOGGER] DEBUG: Determined activity_name: {activity_name}")
             
-            storage_success = log_activity_message_to_supabase(
-                email=request.email,
+            # Use the new comprehensive logging system
+            redis_manager = get_redis_manager()
+            logging_result = await log_and_publish_chat(
+                redis_manager=redis_manager,
+                user_id=user_id,
+                user_input=request.message or "",
+                bot_reply=bot_response,
                 bot_id=request.bot_id,
-                user_message=request.message or "",
-                bot_response=bot_response,
+                email=request.email,
                 platform="weather_news",
-                activity_name=activity_name
+                requested_time=request.request_time or None
             )
-            if storage_success:
-                print(f"[CHAT_LOGGER] ✅ Conversation successfully saved to Supabase for {request.email}")
-                print(f"[CHAT_LOGGER] ✅ Activity type: {activity_name}")
-                print(f"[CHAT_LOGGER] ✅ Endpoint: {endpoint_name}")
+            
+            # Log the results
+            if logging_result["success"]:
+                print(f"[ENHANCED_LOGGER] ✅ Comprehensive logging successful for {request.email}")
+                print(f"[ENHANCED_LOGGER] ✅ Redis: {logging_result['redis_stored']}")
+                print(f"[ENHANCED_LOGGER] ✅ RabbitMQ: {logging_result['rabbitmq_published']}")
+                print(f"[ENHANCED_LOGGER] ✅ Supabase: {logging_result['supabase_stored']}")
             else:
-                print(f"[CHAT_LOGGER] ❌ Failed to save conversation to Supabase for {request.email}")
+                print(f"[ENHANCED_LOGGER] ❌ Comprehensive logging failed for {request.email}")
+                if logging_result["errors"]:
+                    for error in logging_result["errors"]:
+                        print(f"[ENHANCED_LOGGER] ❌ Error: {error}")
+            
+            # Fallback to legacy Supabase logging if new system fails
+            if not logging_result["supabase_stored"]:
+                print(f"[ENHANCED_LOGGER] 🔄 Attempting fallback to legacy Supabase logging...")
+                try:
+                    storage_success = log_activity_message_to_supabase(
+                        email=request.email,
+                        bot_id=request.bot_id,
+                        user_message=request.message or "",
+                        bot_response=bot_response,
+                        platform="weather_news",
+                        activity_name=activity_name
+                    )
+                    if storage_success:
+                        print(f"[ENHANCED_LOGGER] ✅ Fallback Supabase logging successful")
+                    else:
+                        print(f"[ENHANCED_LOGGER] ❌ Fallback Supabase logging failed")
+                except Exception as e:
+                    print(f"[ENHANCED_LOGGER] ❌ Fallback logging failed: {e}")
+            
         except Exception as e:
-            print(f"[CHAT_LOGGER] ❌ Exception while saving conversation: {e}")
+            print(f"[ENHANCED_LOGGER] ❌ Exception in enhanced logging: {e}")
             import traceback
-            print(f"[CHAT_LOGGER] ❌ Full traceback: {traceback.format_exc()}")
-            logging.error(f"Failed to save conversation for {request.email}: {e}")
+            print(f"[ENHANCED_LOGGER] ❌ Full traceback: {traceback.format_exc()}")
+            
+            # Fallback to legacy logging
+            try:
+                activity_name = determine_activity_type(request.message)
+                storage_success = log_activity_message_to_supabase(
+                    email=request.email,
+                    bot_id=request.bot_id,
+                    user_message=request.message or "",
+                    bot_response=bot_response,
+                    platform="weather_news",
+                    activity_name=activity_name
+                )
+                if storage_success:
+                    print(f"[ENHANCED_LOGGER] ✅ Fallback to legacy logging successful")
+                else:
+                    print(f"[ENHANCED_LOGGER] ❌ Fallback to legacy logging failed")
+            except Exception as fallback_error:
+                print(f"[ENHANCED_LOGGER] ❌ Fallback logging also failed: {fallback_error}")
+                logging.error(f"All logging methods failed for {request.email}: {e}")
     else:
-        print(f"[CHAT_LOGGER] ⚠️  WARNING: No email provided, conversation NOT saved to database")
-        print(f"[CHAT_LOGGER] ⚠️  To save conversations, include 'email' field in your request")
+        print(f"[ENHANCED_LOGGER] ⚠️  WARNING: No email provided, conversation NOT saved to any database")
+        print(f"[ENHANCED_LOGGER] ⚠️  To save conversations, include 'email' field in your request")
     
-    # Add logging status to result
+    # Add enhanced logging status to result
     if isinstance(result, dict):
-        result["logged_to_supabase"] = bool(request.email and request.email.strip())
-        result["endpoint"] = endpoint_name
+        result["enhanced_logging"] = {
+            "redis_available": bool(request.email and request.email.strip()),
+            "rabbitmq_available": bool(request.email and request.email.strip()),
+            "supabase_available": bool(request.email and request.email.strip()),
+            "endpoint": endpoint_name
+        }
     
     return result
 
@@ -676,6 +791,39 @@ def generate_proactive_news_message(persona_prompt, user_name, language, bot_loc
         print(f"Error generating proactive news message: {e}")
         return f"Hey {user_name}! Hope you're doing well! Just wanted to reach out and see how things are going with you. Anything interesting happening in your area?"
 
+def get_next_message_type(email, bot_id):
+    """
+    Determine the next message type (weather or news) based on the last proactive message sent.
+    Alternates between weather and news updates.
+    """
+    try:
+        if supabase is None:
+            return "weather"  # Default to weather
+            
+        # Get the last proactive message type
+        response = supabase.table("message_paritition") \
+            .select("activity_name") \
+            .eq("email", email) \
+            .eq("bot_id", bot_id) \
+            .in_("activity_name", ["proactive_weather_update", "proactive_news_update"]) \
+            .order("created_at", desc=True) \
+            .limit(1) \
+            .execute()
+        
+        if response.data and len(response.data) > 0:
+            last_activity = response.data[0]["activity_name"]
+            if last_activity == "proactive_weather_update":
+                return "news"  # Alternate to news
+            else:
+                return "weather"  # Alternate to weather
+        else:
+            # No previous proactive message, start with weather
+            return "weather"
+            
+    except Exception as e:
+        print(f"[PROACTIVE] Error determining next message type for {email}/{bot_id}: {e}")
+        return "weather"  # Default to weather
+
 def send_proactive_weather_updates():
     """
     Send proactive weather updates to users who haven't received a message in 3 days.
@@ -687,28 +835,33 @@ def send_proactive_weather_updates():
         try:
             # Check if it's time to send a proactive message
             if should_send_proactive_message(params["email"], params["bot_id"], days_interval=3):
-                # Generate proactive weather message
-                message = generate_proactive_weather_message(
-                    params["bot_prompt"],
-                    params["user_name"],
-                    params["language"],
-                    params["bot_city"],
-                    params["user_location"]
-                )
-                
-                # Send the message
-                success = insert_bot_message(
-                    email=params["email"],
-                    bot_id=params["bot_id"],
-                    message=message,
-                    activity_name="proactive_weather_update"
-                )
-                
-                if success:
-                    sent_count += 1
-                    print(f"[PROACTIVE] Sent weather update to {params['email']}/{params['bot_id']}")
+                # Check if this user should get a weather update (alternating logic)
+                next_type = get_next_message_type(params["email"], params["bot_id"])
+                if next_type == "weather":
+                    # Generate proactive weather message
+                    message = generate_proactive_weather_message(
+                        params["bot_prompt"],
+                        params["user_name"],
+                        params["language"],
+                        params["bot_city"],
+                        params["user_location"]
+                    )
+                    
+                    # Send the message
+                    success = insert_bot_message(
+                        email=params["email"],
+                        bot_id=params["bot_id"],
+                        message=message,
+                        activity_name="proactive_weather_update"
+                    )
+                    
+                    if success:
+                        sent_count += 1
+                        print(f"[PROACTIVE] Sent weather update to {params['email']}/{params['bot_id']}")
+                    else:
+                        print(f"[PROACTIVE] Failed to send weather update to {params['email']}/{params['bot_id']}")
                 else:
-                    print(f"[PROACTIVE] Failed to send weather update to {params['email']}/{params['bot_id']}")
+                    print(f"[PROACTIVE] Skipping {params['email']}/{params['bot_id']} - next message should be news")
             else:
                 print(f"[PROACTIVE] Skipping {params['email']}/{params['bot_id']} - too soon for next message")
                 
@@ -730,28 +883,33 @@ def send_proactive_news_updates():
         try:
             # Check if it's time to send a proactive message
             if should_send_proactive_message(params["email"], params["bot_id"], days_interval=3):
-                # Generate proactive news message
-                message = generate_proactive_news_message(
-                    params["bot_prompt"],
-                    params["user_name"],
-                    params["language"],
-                    params["bot_city"],
-                    params["user_location"]
-                )
-                
-                # Send the message
-                success = insert_bot_message(
-                    email=params["email"],
-                    bot_id=params["bot_id"],
-                    message=message,
-                    activity_name="proactive_news_update"
-                )
-                
-                if success:
-                    sent_count += 1
-                    print(f"[PROACTIVE] Sent news update to {params['email']}/{params['bot_id']}")
+                # Check if this user should get a news update (alternating logic)
+                next_type = get_next_message_type(params["email"], params["bot_id"])
+                if next_type == "news":
+                    # Generate proactive news message
+                    message = generate_proactive_news_message(
+                        params["bot_prompt"],
+                        params["user_name"],
+                        params["language"],
+                        params["bot_city"],
+                        params["user_location"]
+                    )
+                    
+                    # Send the message
+                    success = insert_bot_message(
+                        email=params["email"],
+                        bot_id=params["bot_id"],
+                        message=message,
+                        activity_name="proactive_news_update"
+                    )
+                    
+                    if success:
+                        sent_count += 1
+                        print(f"[PROACTIVE] Sent news update to {params['email']}/{params['bot_id']}")
+                    else:
+                        print(f"[PROACTIVE] Failed to send news update to {params['email']}/{params['bot_id']}")
                 else:
-                    print(f"[PROACTIVE] Failed to send news update to {params['email']}/{params['bot_id']}")
+                    print(f"[PROACTIVE] Skipping {params['email']}/{params['bot_id']} - next message should be weather")
             else:
                 print(f"[PROACTIVE] Skipping {params['email']}/{params['bot_id']} - too soon for next message")
                 
@@ -803,21 +961,98 @@ def send_proactive_general_updates():
 def start_scheduler():
     scheduler = BackgroundScheduler()
     
-    # New proactive messaging jobs (every 3 days)
-    # Weather updates at 10 AM every 3 days
+    # DISABLED: Daily alert jobs (these were causing multiple messages per day)
+    # scheduler.add_job(send_weather_user_alerts, 'cron', hour=8)
+    # scheduler.add_job(send_weather_bot_alerts, 'cron', hour=14)
+    # scheduler.add_job(send_news_user_alerts, 'cron', hour=19)
+    
+    # Proactive messaging jobs (every 3 days only)
+    # Combined proactive updates at 10 AM every 3 days (alternates between weather and news)
     scheduler.add_job(send_proactive_weather_updates, 'cron', hour=10, day='*/3')
-    # News updates at 4 PM every 3 days  
-    scheduler.add_job(send_proactive_news_updates, 'cron', hour=16, day='*/3')
+    scheduler.add_job(send_proactive_news_updates, 'cron', hour=10, day='*/3')
     # General updates at 6 PM every 3 days (fallback)
     scheduler.add_job(send_proactive_general_updates, 'cron', hour=18, day='*/3')
     
     scheduler.start()
-    print("[SCHEDULER] Proactive messaging scheduler started with 3-day intervals")
+    print("[SCHEDULER] Proactive messaging scheduler started with 3-day intervals only (daily alerts disabled)")
 
 # --- Startup event handlers ---
 app.add_event_handler("startup", scheduled_weekly_news_summary)
 # app.add_event_handler("startup", scheduled_major_event_alert)
 app.add_event_handler("startup", start_scheduler)
+
+# --- Enhanced Logging System Startup ---
+@app.on_event("startup")
+async def startup_logging_system():
+    """Initialize the enhanced logging system on startup"""
+    try:
+        print("[STARTUP] 🚀 Initializing enhanced logging system...")
+        
+        # Test environment configuration
+        try:
+            validate_environment()
+            print("[STARTUP] ✅ Environment variables validated")
+        except ValueError as e:
+            print(f"[STARTUP] ⚠️  Environment validation failed: {e}")
+            print("[STARTUP] ⚠️  Some logging features may not work correctly")
+        
+        # Test individual connections
+        connection_results = {"redis": False, "rabbitmq": False, "supabase": False, "errors": []}
+        
+        # Test Redis
+        try:
+            redis_manager = get_redis_manager()
+            redis_manager._ensure_connection()
+            connection_results["redis"] = True
+            print("[STARTUP] ✅ Redis: Connected")
+        except Exception as e:
+            connection_results["errors"].append(f"Redis connection failed: {e}")
+            print(f"[STARTUP] ❌ Redis: Failed - {e}")
+        
+        # Test RabbitMQ
+        try:
+            rabbitmq_manager = get_rabbitmq_manager()
+            rabbitmq_manager._ensure_connection()
+            connection_results["rabbitmq"] = True
+            print("[STARTUP] ✅ RabbitMQ: Connected")
+        except Exception as e:
+            connection_results["errors"].append(f"RabbitMQ connection failed: {e}")
+            print(f"[STARTUP] ❌ RabbitMQ: Failed - {e}")
+        
+        # Test Supabase
+        try:
+            supabase_manager = get_supabase_manager()
+            connection_results["supabase"] = True
+            print("[STARTUP] ✅ Supabase: Connected")
+        except Exception as e:
+            connection_results["errors"].append(f"Supabase connection failed: {e}")
+            print(f"[STARTUP] ❌ Supabase: Failed - {e}")
+        
+        if all([connection_results["redis"], connection_results["rabbitmq"], connection_results["supabase"]]):
+            print("[STARTUP] ✅ All logging systems (Redis, RabbitMQ, Supabase) are operational")
+        else:
+            print("[STARTUP] ⚠️  Some logging systems are not operational")
+            if connection_results["errors"]:
+                print("[STARTUP] Errors:")
+                for error in connection_results["errors"]:
+                    print(f"[STARTUP] ❌ {error}")
+        
+        print("[STARTUP] 🎯 Enhanced logging system initialization complete")
+        
+    except Exception as e:
+        print(f"[STARTUP] ❌ Failed to initialize enhanced logging system: {e}")
+        import traceback
+        print(f"[STARTUP] ❌ Full traceback: {traceback.format_exc()}")
+
+@app.on_event("shutdown")
+async def shutdown_logging_system():
+    """Clean up logging system connections on shutdown"""
+    try:
+        print("[SHUTDOWN] 🧹 Cleaning up logging system connections...")
+        cleanup_connections()
+        print("[SHUTDOWN] ✅ Logging system cleanup complete")
+    except Exception as e:
+        print(f"[SHUTDOWN] ❌ Error during cleanup: {e}")
 
 # --- Manual trigger endpoints ---
 @app.post("/run_weekly_summary")
@@ -946,10 +1181,11 @@ async def get_proactive_status():
             "total_active_users": user_count,
             "eligible_for_proactive_messages": eligible_count,
             "proactive_interval_days": 3,
+            "message_logic": "First message sent 3 days after friendship, then alternating weather/news every 3 days",
             "scheduled_times": {
-                "weather_updates": "10:00 AM every 3 days",
-                "news_updates": "4:00 PM every 3 days", 
-                "general_updates": "6:00 PM every 3 days"
+                "proactive_updates": "10:00 AM every 3 days (alternates weather/news)",
+                "general_updates": "6:00 PM every 3 days (fallback)",
+                "breaking_alerts": "8:00 AM (weather), 2:00 PM (weather), 7:00 PM (news) daily"
             }
         }
     except Exception as e:
@@ -1066,3 +1302,213 @@ async def test_message_logging(request: QuestionRequest):
     }
     
     return result
+
+# --- Enhanced Logging System Test Endpoints ---
+@app.post("/test_enhanced_logging")
+async def test_enhanced_logging(request: QuestionRequest):
+    """Test endpoint for the new Redis + RabbitMQ + Supabase logging system"""
+    print(f"[ENHANCED_LOGGING_TEST] 🧪 Testing enhanced logging for {request.email or 'NO EMAIL'}")
+    
+    # Create a test response
+    test_response = f"Enhanced logging test successful! Your message '{request.message}' will be logged to Redis, RabbitMQ, and Supabase."
+    
+    # Use the enhanced logging wrapper
+    async def test_logic(req):
+        return {
+            "response": test_response,
+            "user_name": req.user_name,
+            "language": req.language,
+            "test_type": "enhanced_logging_verification"
+        }
+    
+    result = await log_and_process_chat(request, test_logic, "test_enhanced_logging")
+    
+    # Add enhanced test information
+    result["enhanced_logging_test"] = {
+        "email_provided": bool(request.email and request.email.strip()),
+        "message_length": len(request.message or ""),
+        "bot_id": request.bot_id,
+        "timestamp": datetime.utcnow().isoformat(),
+        "systems_tested": ["Redis", "RabbitMQ", "Supabase"]
+    }
+    
+    return result
+
+@app.get("/logging_system_status")
+async def get_logging_system_status():
+    """Get the status of all logging systems (Redis, RabbitMQ, Supabase)"""
+    try:
+        # Test environment configuration
+        try:
+            validate_environment()
+            env_status = "valid"
+        except ValueError as e:
+            env_status = f"invalid: {str(e)}"
+        
+        # Test individual connections
+        connection_results = {"redis": False, "rabbitmq": False, "supabase": False, "errors": []}
+        
+        # Test Redis
+        try:
+            redis_manager = get_redis_manager()
+            redis_manager._ensure_connection()
+            connection_results["redis"] = True
+        except Exception as e:
+            connection_results["errors"].append(f"Redis connection failed: {e}")
+        
+        # Test RabbitMQ
+        try:
+            rabbitmq_manager = get_rabbitmq_manager()
+            rabbitmq_manager._ensure_connection()
+            connection_results["rabbitmq"] = True
+        except Exception as e:
+            connection_results["errors"].append(f"RabbitMQ connection failed: {e}")
+        
+        # Test Supabase
+        try:
+            supabase_manager = get_supabase_manager()
+            connection_results["supabase"] = True
+        except Exception as e:
+            connection_results["errors"].append(f"Supabase connection failed: {e}")
+        
+        return {
+            "status": "success",
+            "environment_config": {
+                "redis_url_configured": bool(os.getenv("REDIS_URL")),
+                "rabbitmq_url_configured": bool(os.getenv("RABBITMQ_URL")),
+                "supabase_url_configured": bool(os.getenv("SUPABASE_URL")),
+                "supabase_key_configured": bool(os.getenv("SUPABASE_KEY")),
+                "validation_status": env_status
+            },
+            "connection_status": connection_results,
+            "system_health": {
+                "redis": connection_results["redis"],
+                "rabbitmq": connection_results["rabbitmq"],
+                "supabase": connection_results["supabase"]
+            },
+            "recommendations": [
+                "Ensure all environment variables are set correctly in .env file",
+                "Check that Redis server is running and accessible",
+                "Check that RabbitMQ server is running and accessible", 
+                "Verify Supabase credentials and network connectivity"
+            ] if not all([connection_results["redis"], connection_results["rabbitmq"], connection_results["supabase"]]) else ["All systems operational"]
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Failed to check logging system status: {str(e)}",
+            "recommendations": [
+                "Check environment variable configuration in .env file",
+                "Verify all service connections",
+                "Review error logs for specific issues"
+            ]
+        }
+
+@app.get("/redis_status")
+async def get_redis_status():
+    """Get Redis connection and data status"""
+    try:
+        redis_manager = get_redis_manager()
+        
+        # Test basic operations
+        test_key = "test:connection"
+        test_data = {"test": "data", "timestamp": datetime.utcnow().isoformat()}
+        
+        # Store test data
+        store_success = redis_manager.store_user_data(test_key, test_data, ttl=60)
+        
+        # Retrieve test data
+        retrieved_data = redis_manager.get_user_data(test_key)
+        
+        # Clean up test data
+        redis_manager.clear_user_data(test_key)
+        
+        return {
+            "status": "success",
+            "connection": "active",
+            "test_operations": {
+                "store": store_success,
+                "retrieve": retrieved_data is not None,
+                "data_match": retrieved_data == test_data if retrieved_data else False
+            },
+            "redis_url": redis_manager.redis_url[:20] + "..." if redis_manager.redis_url else "Not configured"
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Redis connection failed: {str(e)}",
+            "recommendations": [
+                "Check Redis server is running",
+                "Verify REDIS_URL environment variable",
+                "Check network connectivity to Redis server"
+            ]
+        }
+
+@app.get("/rabbitmq_status")
+async def get_rabbitmq_status():
+    """Get RabbitMQ connection status"""
+    try:
+        rabbitmq_manager = get_rabbitmq_manager()
+        
+        # Test connection
+        rabbitmq_manager._ensure_connection()
+        
+        return {
+            "status": "success",
+            "connection": "active",
+            "rabbitmq_url": rabbitmq_manager.rabbitmq_url[:20] + "..." if rabbitmq_manager.rabbitmq_url else "Not configured",
+            "queues_configured": ["message_storage", "message_processing"]
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"RabbitMQ connection failed: {str(e)}",
+            "recommendations": [
+                "Check RabbitMQ server is running",
+                "Verify RABBITMQ_URL environment variable",
+                "Check network connectivity to RabbitMQ server"
+            ]
+        }
+
+@app.get("/supabase_status")
+async def get_supabase_status():
+    """Get Supabase connection status"""
+    try:
+        supabase_manager = get_supabase_manager()
+        
+        # Test connection by trying to read from the table
+        response = supabase_manager.supabase_client.table("message_paritition").select("id").limit(1).execute()
+        
+        return {
+            "status": "success",
+            "connection": "active",
+            "supabase_url": supabase_manager.supabase_url[:20] + "..." if supabase_manager.supabase_url else "Not configured",
+            "data_count": len(response.data) if response.data else 0,
+            "table_accessible": True
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Supabase connection failed: {str(e)}",
+            "recommendations": [
+                "Check Supabase credentials",
+                "Verify SUPABASE_URL and SUPABASE_KEY environment variables",
+                "Check network connectivity to Supabase",
+                "Verify table permissions"
+            ]
+        }
+
+@app.post("/cleanup_connections")
+async def cleanup_logging_connections():
+    """Clean up all logging system connections"""
+    try:
+        cleanup_connections()
+        return {
+            "status": "success",
+            "message": "All logging system connections cleaned up successfully"
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Failed to cleanup connections: {str(e)}"
+        }
