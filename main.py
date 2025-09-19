@@ -25,6 +25,7 @@ import asyncio
 import random
 import hashlib
 from fastapi.middleware.cors import CORSMiddleware
+import re
 
 # --- Import new message logging system ---
 from message_logging_system import (
@@ -205,6 +206,13 @@ def get_all_active_users():
     except Exception as e:
         logging.error(f"Exception in get_all_active_users: {e}")
         return []
+
+def filter_asterisks(text: str) -> str:
+    """Removes asterisks from a string using regex."""
+    if not isinstance(text, str):
+        return text
+    # The pattern r'\*' matches a literal asterisk
+    return re.sub(r'\*', '', text)
 
 def get_user_bot_friendship_time(email, bot_id):
     """
@@ -510,6 +518,13 @@ async def log_and_process_chat(request: QuestionRequest, response_func, endpoint
         print(f"[ENHANCED_LOGGER] ❌ Error processing request: {e}")
         bot_response = f"Sorry, I encountered an error: {str(e)}"
         result = {"response": bot_response, "error": str(e)}
+    
+    # ✅ Apply the asterisk filter to the response
+    bot_response = filter_asterisks(bot_response)
+
+    # ✅ Update the result dictionary with the cleaned response
+    if isinstance(result, dict):
+        result["response"] = bot_response
     
     # Enhanced logging with Redis, RabbitMQ, and Supabase
     if request.email and request.email.strip():
